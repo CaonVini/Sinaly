@@ -102,7 +102,7 @@ function Content() {
           </div>
           </div>
         </div>
-        <div className="-mx-1 flex gap-1 overflow-x-auto px-1" role="tablist" aria-label="Filtrar por status">
+        <div className="flex flex-wrap gap-1" role="tablist" aria-label="Filtrar por status">
           {[{ key: null, label: "Todas", n: total }, ...STATUSES.map((s) => ({ key: s as Status | null, label: STATUS_LABELS[s], n: count(s) }))].map((t) => (
             <button
               key={t.key ?? "all"}
@@ -121,12 +121,12 @@ function Content() {
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(24rem,32rem)_1fr]">
+      <div className="grid min-h-0 flex-1 lg:grid-cols-[22rem_1fr] 2xl:grid-cols-[24rem_1fr]">
         <section className="flex min-h-0 flex-col border-r bg-muted/30" aria-label="Lista de ocorrências">
-          <div className="flex items-center justify-between gap-3 border-b bg-card px-4 py-3">
+          <div className="flex items-center justify-between gap-2 border-b bg-card px-3 py-3">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <span className="whitespace-nowrap">Ordenar por</span>
-              <div className="w-40">
+              <div className="w-36">
                 <Select value={order} onValueChange={(v) => setParam("order", v === "asc" ? "asc" : null)}>
                   <SelectTrigger aria-label="Ordenar por" className="h-8"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -136,25 +136,25 @@ function Content() {
                 </Select>
               </div>
             </div>
-            <span className="text-sm text-muted-foreground tabular-nums" aria-live="polite">
+            <span className="text-sm whitespace-nowrap text-muted-foreground tabular-nums" aria-live="polite">
               {matching === null ? "" : `${matching} ${matching === 1 ? "ocorrência" : "ocorrências"}`}
             </span>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto">
             {error && <p role="alert" className="p-4 text-sm text-destructive">{error}</p>}
-            <ul className="space-y-2.5 p-3">
+            <ul className="space-y-2 p-2.5">
               {items.map((o) => (
                 <li key={o.id}>
                   <button
                     onClick={() => setParam("id", o.id)}
                     aria-current={selected === o.id}
                     className={cn(
-                      "flex w-full gap-3.5 rounded-xl border bg-card p-3 text-left shadow-xs transition-colors hover:border-primary/40",
+                      "flex w-full gap-3 rounded-xl border bg-card p-3 text-left shadow-xs transition-colors hover:border-primary/40",
                       selected === o.id && "border-primary bg-accent/50 ring-1 ring-primary",
                     )}
                   >
-                    <span className="flex size-[5.5rem] shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted text-muted-foreground">
+                    <span className="flex size-20 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted text-muted-foreground">
                       {o.thumbUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={`/api/proxy/${o.thumbUrl.replace(/^\//, "")}`} alt="" loading="lazy" className="size-full object-cover" />
