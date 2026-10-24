@@ -15,6 +15,8 @@ export type Occurrence = {
   photoUrl: string | null;
   thumbUrl: string | null;
   authorName?: string | null;
+  source?: "app" | "prefeitura";
+  contact?: { name: string | null; phone: string | null } | null;
   history?: { from: Status | null; to: Status; note: string | null; at: string }[];
 };
 
@@ -41,11 +43,12 @@ export class ApiError extends Error {
 }
 
 /** Fala com a API através do proxy do painel (cookies httpOnly; sem token no JS). */
-export async function api<T>(path: string, init?: { method?: "GET" | "PATCH"; body?: unknown; signal?: AbortSignal }): Promise<T> {
+export async function api<T>(path: string, init?: { method?: "GET" | "PATCH" | "POST"; body?: unknown; signal?: AbortSignal }): Promise<T> {
+  const form = init?.body instanceof FormData;
   const res = await fetch(`/api/proxy/${path}`, {
     method: init?.method ?? "GET",
-    headers: init?.body ? { "content-type": "application/json" } : undefined,
-    body: init?.body ? JSON.stringify(init.body) : undefined,
+    headers: init?.body && !form ? { "content-type": "application/json" } : undefined, // multipart: o navegador define o boundary
+    body: init?.body ? (form ? (init.body as FormData) : JSON.stringify(init.body)) : undefined,
     signal: init?.signal,
     credentials: "same-origin",
   });

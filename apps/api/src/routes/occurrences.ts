@@ -10,8 +10,10 @@ import {
   createOccurrenceFieldsSchema,
   listQuerySchema,
   mapQuerySchema,
+  staffCreateFieldsSchema,
   staffUpdateSchema,
   type Category,
+  type Source,
   type Status,
 } from "@sinaly/shared";
 import { discardPhoto, ImageError, storePhoto } from "../images.js";
@@ -19,11 +21,12 @@ import type { Auth } from "../auth.js";
 import { db } from "../db/client.js";
 import { citizenProfiles, notifications, occurrenceAudit, occurrences, statusHistory, users } from "../db/schema.js";
 import { decodeCursor, encodeCursor, HttpError, limitConfig, parse, UUID_RE } from "../http.js";
+import { decrypt, encrypt } from "../security/crypto.js";
 import { openObject, thumbKey } from "../storage.js";
 
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 const DAILY_CAP = 20; // ocorrências por cidadão em 24 h (anti-spam)
-const FIELD_NAMES = new Set(["category", "description", "lat", "lng"]);
+const FIELD_NAMES = new Set(["category", "description", "lat", "lng", "status", "reporterName", "reporterPhone"]);
 
 const columns = {
   id: occurrences.id,
@@ -87,27 +90,49 @@ const inBbox = (b: { minLng: number; minLat: number; maxLng: number; maxLat: num
 
 async function fetchOne(id: string, tx: Pick<typeof db, "select"> = db, lock = false) {
   const q = tx
-    .select({ ...columns, authorId: occurrences.authorId, photoKey: occurrences.photoKey })
+    .select({ ...columns, authorId: occurrences.authorId, photoKey: occurrences.photoKey, source: occurrences.source, contactEnc: occurrences.reporterContactEnc })
     .from(occurrences)
     .where(eq(occurrences.id, id))
     .limit(1);
   const [row] = await (lock ? q.for("update") : q);
-  return row as (Row & { authorId: string; photoKey: string | null }) | undefined;
+  return row as (Row & { authorId: string; photoKey: string | null; source: Source; contactEnc: string | null }) | undefined;
 }
 
 async function page(where: SQL | undefined, limit: number, cursor: string | undefined) {
   const c = decodeCursor(cursor);
   const after = c ? sql`(${occurrences.createdAt}, ${occurrences.id}) < (${c.t}::timestamptz, ${c.id}::uuid)` : undefined;
   const rows = (await db
-    .select({ ...columns, authorId: occurrences.authorId, authorName: users.name })
+    .select({ ...columns, authorId: occurrences.authorId, authorName: users.name, source: occurrences.source, contactEnc: occurrences.reporterContactEnc })
     .from(occurrences)
     .leftJoin(users, eq(users.id, occurrences.authorId))
     .where(and(where, after))
     .orderBy(desc(occurrences.createdAt), desc(occurrences.id))
-    .limit(limit + 1)) as (Row & { authorId: string; authorName: string | null })[];
+    .limit(limit + 1)) as (Row & { authorId: string; authorName: string | null; source: Source; contactEnc: string | null })[];
   const items = rows.slice(0, limit);
   const last = items.at(-1);
   return { items, nextCursor: rows.length > limit && last ? encodeCursor(last.cursorTs, last.id) : null };
+}
+
+/** Contato de quem ligou (cifrado em repouso). Só é devolvido a funcionários. */
+function contactOf(enc: string | null): { name: string | null; phone: string | null } | null {
+  if (!enc) return null;
+  try {
+    const c = JSON.parse(decrypt(enc)) as { name?: string; phone?: string };
+    return { name: c.name ?? null, phone: c.phone ?? null };
+  } catch {
+    return null;
+  }
+}
+
+const staffExtras = (r: { source: Source; contactEnc: string | null }) => ({ source: r.source, contact: contactOf(r.contactEnc) });
+
+/** Período de criação em dias no horário de Brasília (from inclusivo, to inclusivo). */
+function createdBetween(from?: string, to?: string): SQL | undefined {
+  const tz = "America/Sao_Paulo";
+  return and(
+    from ? sql`${occurrences.createdAt} >= (${from}::date)::timestamp at time zone ${tz}` : undefined,
+    to ? sql`${occurrences.createdAt} < ((${to}::date + 1)::timestamp at time zone ${tz})` : undefined,
+  );
 }
 
 async function readMultipart(req: FastifyRequest): Promise<{ fields: Record<string, string>; file: Buffer | null }> {
@@ -215,6 +240,7 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
     const row = await fetchOne(id);
     if (!row || !canSee(auth, row)) throw new HttpError(404, "Ocorrência não encontrada"); // 404, não 403: não revela que existe
     const body: Record<string, unknown> = dto(row);
+    if (isStaff(auth)) Object.assign(body, staffExtras(row));
     if (isStaff(auth) || auth?.userId === row.authorId) {
       const history = await db
         .select({ from: statusHistory.fromStatus, to: statusHistory.toStatus, note: statusHistory.note, at: statusHistory.createdAt })
@@ -264,11 +290,68 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
   app.get("/staff/occurrences", { preHandler: staffOnly }, async (req) => {
     const q = parse(listQuerySchema, req.query);
     const { items, nextCursor } = await page(
-      and(q.status ? eq(occurrences.status, q.status) : undefined, q.category ? eq(occurrences.category, q.category) : undefined, q.bbox ? inBbox(q.bbox) : undefined),
+      and(
+        q.status ? eq(occurrences.status, q.status) : undefined,
+        q.category ? eq(occurrences.category, q.category) : undefined,
+        q.bbox ? inBbox(q.bbox) : undefined,
+        createdBetween(q.from, q.to),
+      ),
       q.limit,
       q.cursor,
     );
-    return { items: items.map((r) => ({ ...dto(r), authorId: r.authorId, authorName: r.authorName })), nextCursor };
+    return { items: items.map((r) => ({ ...dto(r), authorId: r.authorId, authorName: r.authorName, ...staffExtras(r) })), nextCursor };
+  });
+
+  // Cadastro manual (ex.: ligação por telefone). Foto opcional; entra já visível ao cidadão conforme o status escolhido.
+  app.post("/staff/occurrences", { preHandler: staffOnly, ...rl(60, "1 minute") }, async (req, reply) => {
+    const { fields, file } = await readMultipart(req);
+    const data = parse(staffCreateFieldsSchema, fields);
+    const actor = req.auth;
+    const contact = data.reporterName || data.reporterPhone ? encrypt(JSON.stringify({ name: data.reporterName ?? null, phone: data.reporterPhone ?? null })) : null;
+
+    const photoKey = file ? await photoOrThrow(file) : null;
+    try {
+      const id = await db.transaction(async (tx) => {
+        const [created] = await tx
+          .insert(occurrences)
+          .values({
+            authorId: actor.userId,
+            category: data.category,
+            description: data.description,
+            location: sql`ST_SetSRID(ST_MakePoint(${data.lng}, ${data.lat}), 4326)` as unknown as { x: number; y: number },
+            photoKey,
+            status: data.status,
+            source: "prefeitura",
+            reporterContactEnc: contact,
+          })
+          .returning({ id: occurrences.id });
+        const occurrenceId = created!.id;
+        await tx.insert(statusHistory).values({ occurrenceId, fromStatus: null, toStatus: data.status, changedBy: actor.userId });
+        await tx.insert(occurrenceAudit).values({
+          occurrenceId,
+          actorId: actor.userId,
+          actorRole: actor.role,
+          action: "create",
+          // O contato não vai para a auditoria em texto aberto: só registramos que existe.
+          changes: {
+            source: { to: "prefeitura" },
+            status: { to: data.status },
+            category: { to: data.category },
+            description: { to: data.description },
+            location: { to: { lat: data.lat, lng: data.lng } },
+            photo: { to: photoKey },
+            ...(contact ? { reporterContact: { to: "informado" } } : {}),
+          },
+          ip: req.ip,
+        });
+        return occurrenceId;
+      });
+      const row = (await fetchOne(id))!;
+      return reply.code(201).send({ ...dto(row), authorId: row.authorId, ...staffExtras(row) });
+    } catch (e) {
+      await discardPhoto(photoKey);
+      throw e;
+    }
   });
 
   app.patch("/staff/occurrences/:id", { preHandler: staffOnly, ...rl(60, "1 minute") }, async (req) => {

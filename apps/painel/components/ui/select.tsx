@@ -10,7 +10,7 @@ export const SelectValue = S.Value;
 export const SelectTrigger = ({ className, children, ...p }: ComponentProps<typeof S.Trigger>) => (
   <S.Trigger
     className={cn(
-      "flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-card px-3 text-sm shadow-xs transition-colors data-[placeholder]:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50",
+      "flex h-9 w-full items-center justify-between gap-2 whitespace-nowrap rounded-md border border-input bg-card px-3 text-sm shadow-xs transition-colors data-[placeholder]:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50",
       className,
     )}
     {...p}

@@ -207,6 +207,68 @@ describe("visibilidade", () => {
     expect((await send("GET", "/staff/occurrences", a.token)).statusCode).toBe(403);
   });
 
+  it("prefeitura cadastra ocorrência manualmente (ligação), sem foto, com contato protegido", async () => {
+    const a = await citizen("a@example.com", "529.982.247-25");
+    const st = await staff();
+    const f = { category: "seguranca", description: "Moradora ligou relatando poste caído na calçada", lat: String(SP.lat), lng: String(SP.lng), reporterName: "Dona Rita", reporterPhone: "(11) 91234-5678" };
+
+    // cidadão não pode; campos inválidos não passam
+    expect((await multipartPost("/staff/occurrences", a.token, f)).statusCode).toBe(403);
+    expect((await multipartPost("/staff/occurrences", st, { ...f, reporterPhone: "123" })).statusCode).toBe(400);
+    expect((await multipartPost("/staff/occurrences", st, { ...f, status: "resolvido" })).statusCode).toBe(400);
+    expect((await multipartPost("/staff/occurrences", st, { ...f, description: "curta" })).statusCode).toBe(400);
+
+    const res = await multipartPost("/staff/occurrences", st, f);
+    expect(res.statusCode).toBe(201);
+    const o = res.json();
+    expect(o.status).toBe("em_analise"); // padrão da prefeitura: já visível no mapa
+    expect(o.source).toBe("prefeitura");
+    expect(o.photoUrl).toBeNull();
+    expect(o.contact).toEqual({ name: "Dona Rita", phone: "11912345678" });
+
+    // contato cifrado em repouso
+    const raw = await pool.query("select reporter_contact_enc as c from occurrences where id = $1", [o.id]).then((r) => r.rows[0].c as string);
+    expect(raw).not.toContain("Rita");
+    expect(raw).not.toContain("91234");
+
+    // público vê a ocorrência, mas nunca origem nem contato
+    const pub = (await send("GET", `/occurrences/${o.id}`)).json();
+    expect(pub.id).toBe(o.id);
+    expect(pub).not.toHaveProperty("contact");
+    expect(pub).not.toHaveProperty("source");
+    expect(ids(await map())).toContain(o.id);
+    // funcionário vê origem e contato no detalhe e na lista
+    const det = (await send("GET", `/occurrences/${o.id}`, st)).json();
+    expect(det.contact.phone).toBe("11912345678");
+    const list = (await send("GET", "/staff/occurrences", st)).json().items[0];
+    expect(list.source).toBe("prefeitura");
+
+    // auditoria: criação pelo funcionário, sem telefone em texto aberto
+    const audit = (await send("GET", `/staff/occurrences/${o.id}/audit`, st)).json().items;
+    expect(audit).toHaveLength(1);
+    expect(audit[0].action).toBe("create");
+    expect(audit[0].actorRole).toBe("servidor");
+    expect(JSON.stringify(audit)).not.toContain("91234");
+
+    // com foto também funciona e com status inicial escolhido
+    const withPhoto = await multipartPost("/staff/occurrences", st, { ...f, status: "nao_verificado", reporterPhone: "" , reporterName: "" }, { data: await jpeg() });
+    expect(withPhoto.statusCode).toBe(201);
+    expect(withPhoto.json().status).toBe("nao_verificado");
+    expect(withPhoto.json().contact).toBeNull();
+    expect(withPhoto.json().photoUrl).toContain("/photo");
+  });
+
+  it("lista da prefeitura filtra por período de criação", async () => {
+    const a = await citizen("a@example.com", "529.982.247-25");
+    const st = await staff();
+    const o = await create(a.token);
+    const today = new Date().toISOString().slice(0, 10);
+    const ontem = new Date(Date.now() - 2 * 86400_000).toISOString().slice(0, 10);
+    expect(ids(await send("GET", `/staff/occurrences?from=${ontem}&to=${today}`, st))).toEqual([o.id]);
+    expect(ids(await send("GET", `/staff/occurrences?to=${ontem}`, st))).toEqual([]);
+    expect((await send("GET", "/staff/occurrences?from=ontem", st)).statusCode).toBe(400);
+  });
+
   it("estatísticas do painel: só funcionário, com contagens corretas", async () => {
     const a = await citizen("a@example.com", "529.982.247-25");
     const st = await staff();

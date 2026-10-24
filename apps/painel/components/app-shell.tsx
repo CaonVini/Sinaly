@@ -1,5 +1,5 @@
 "use client";
-import { LayoutDashboard, ListChecks, LogOut } from "lucide-react";
+import { LayoutDashboard, ListChecks, LogOut, Table2 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 const NAV = [
   { href: "/visao-geral", label: "Visão geral", icon: LayoutDashboard },
   { href: "/ocorrencias", label: "Ocorrências", icon: ListChecks },
+  { href: "/planilha", label: "Planilha", icon: Table2 },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {

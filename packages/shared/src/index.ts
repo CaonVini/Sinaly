@@ -79,6 +79,30 @@ export const createOccurrenceFieldsSchema = z.object({
 });
 export type CreateOccurrenceFields = z.infer<typeof createOccurrenceFieldsSchema>;
 
+/** Estados em que a prefeitura pode registrar uma ocorrência (ex.: ligação por telefone). */
+export const STAFF_CREATE_STATUSES = ["nao_verificado", "em_analise", "em_atendimento"] as const;
+export const SOURCES = ["app", "prefeitura"] as const;
+export type Source = (typeof SOURCES)[number];
+export const SOURCE_LABELS: Record<Source, string> = { app: "Aplicativo", prefeitura: "Prefeitura" };
+
+const blankToUndefined = (v: unknown) => (typeof v === "string" && v.trim() === "" ? undefined : v);
+
+/** Cadastro manual pela prefeitura (multipart; a foto é opcional). Contato de quem ligou é opcional. */
+export const staffCreateFieldsSchema = createOccurrenceFieldsSchema.extend({
+  status: z.enum(STAFF_CREATE_STATUSES).default("em_analise"),
+  // Campo vazio do formulário vale como "não informado".
+  reporterName: z.preprocess(blankToUndefined, text(2, 120).optional()),
+  reporterPhone: z.preprocess(
+    blankToUndefined,
+    z
+      .string()
+      .transform((v) => v.replace(/\D/g, ""))
+      .pipe(z.string().regex(/^\d{10,11}$/, "Telefone inválido (DDD + número)"))
+      .optional(),
+  ),
+});
+export type StaffCreateFields = z.infer<typeof staffCreateFieldsSchema>;
+
 /** Edição pela prefeitura. Campos desconhecidos (ex.: authorId) são rejeitados. */
 export const staffUpdateSchema = z
   .object({
@@ -121,6 +145,9 @@ export const listQuerySchema = z.object({
   status: statusSchema.optional(),
   category: categorySchema.optional(),
   bbox: bbox.optional(),
+  // Período de criação (dias no horário de Brasília), usado pela planilha da prefeitura.
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
 export const notificationsQuerySchema = z.object({

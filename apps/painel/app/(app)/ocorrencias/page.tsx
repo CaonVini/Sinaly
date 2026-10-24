@@ -1,9 +1,10 @@
 "use client";
 import { CATEGORIES, CATEGORY_LABELS, STATUSES, STATUS_LABELS, type Category, type Status } from "@sinaly/shared";
-import { Loader2, MapPinned } from "lucide-react";
+import { Loader2, MapPinned, Plus } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
+import { NewOccurrenceSheet } from "@/components/new-occurrence-sheet";
 import { OccurrenceSheet } from "@/components/occurrence-sheet";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,7 @@ function Content() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
+  const [creating, setCreating] = useState(false);
   const stats = useApi<Stats>("staff/stats");
   const reloadStats = stats.reload;
 
@@ -83,6 +85,8 @@ function Content() {
       <header className="space-y-3 border-b bg-card px-4 py-4 md:px-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-xl font-semibold tracking-tight">Ocorrências</h1>
+          <div className="flex items-center gap-2">
+          <Button size="sm" onClick={() => setCreating(true)}><Plus /> Nova ocorrência</Button>
           <div className="w-48">
             <Select value={category ?? ALL} onValueChange={(v) => setParam("category", v === ALL ? null : v)}>
               <SelectTrigger aria-label="Categoria"><SelectValue /></SelectTrigger>
@@ -91,6 +95,7 @@ function Content() {
                 {CATEGORIES.map((c) => <SelectItem key={c} value={c}>{CATEGORY_LABELS[c]}</SelectItem>)}
               </SelectContent>
             </Select>
+          </div>
           </div>
         </div>
         <div className="-mx-1 flex gap-1 overflow-x-auto px-1" role="tablist" aria-label="Filtrar por status">
@@ -158,6 +163,17 @@ function Content() {
         </section>
       </div>
 
+      <NewOccurrenceSheet
+        open={creating}
+        onClose={() => setCreating(false)}
+        center={items[0] ? { lat: items[0].lat, lng: items[0].lng } : null}
+        onCreated={(o) => {
+          setCreating(false);
+          setVersion((v) => v + 1);
+          reloadStats();
+          setParam("id", o.id);
+        }}
+      />
       <OccurrenceSheet id={selected} onClose={() => setParam("id", null)} onChanged={() => (setVersion((v) => v + 1), reloadStats())} />
     </div>
   );

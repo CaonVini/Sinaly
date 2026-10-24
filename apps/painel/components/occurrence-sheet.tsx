@@ -1,6 +1,6 @@
 "use client";
-import { ALLOWED_TRANSITIONS, CATEGORIES, CATEGORY_LABELS, STATUS_LABELS, type Category, type Status } from "@sinaly/shared";
-import { ExternalLink, ImageOff, Loader2, Pencil } from "lucide-react";
+import { ALLOWED_TRANSITIONS, CATEGORIES, CATEGORY_LABELS, SOURCE_LABELS, STATUS_LABELS, type Category, type Status } from "@sinaly/shared";
+import { ExternalLink, ImageOff, Loader2, Pencil, Phone } from "lucide-react";
 import { useState } from "react";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
@@ -24,11 +24,12 @@ const ACTION: Record<string, { label: string; variant: "default" | "outline" | "
   "recusado>nao_verificado": { label: "Desfazer recusa", variant: "outline" },
 };
 
-const FIELD: Record<string, string> = { status: "Status", category: "Categoria", description: "Descrição", location: "Localização", note: "Observação", photo: "Foto" };
+const FIELD: Record<string, string> = { status: "Status", category: "Categoria", description: "Descrição", location: "Localização", note: "Observação", photo: "Foto", source: "Origem", reporterContact: "Contato de quem relatou" };
 
 function show(field: string, v: unknown): string {
   if (v === null || v === undefined) return "—";
   if (field === "status") return STATUS_LABELS[v as Status] ?? String(v);
+  if (field === "source") return SOURCE_LABELS[v as keyof typeof SOURCE_LABELS] ?? String(v);
   if (field === "category") return CATEGORY_LABELS[v as Category] ?? String(v);
   if (field === "location" && typeof v === "object") {
     const p = v as { lat: number; lng: number };
@@ -128,6 +129,18 @@ function Detail({ id, onChanged }: { id: string; onChanged: () => void }) {
             <p className="text-sm leading-relaxed whitespace-pre-wrap">{o.description}</p>
           )}
         </section>
+
+        {o.source === "prefeitura" && (
+          <section className="space-y-1 rounded-lg border bg-muted/40 p-3 text-sm">
+            <p className="flex items-center gap-2 font-medium"><Phone className="size-4 text-muted-foreground" /> Registrada pela prefeitura{o.authorName ? ` (${o.authorName})` : ""}</p>
+            {o.contact && (
+              <p className="text-muted-foreground">
+                Quem relatou: {o.contact.name ?? "—"}
+                {o.contact.phone && <> · <a className="text-primary hover:underline" href={`tel:${o.contact.phone}`}>{o.contact.phone.replace(/^(\d{2})(\d{4,5})(\d{4})$/, "($1) $2-$3")}</a></>}
+              </p>
+            )}
+          </section>
+        )}
 
         <section className="grid grid-cols-2 gap-4">
           <div className="space-y-2">

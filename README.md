@@ -105,3 +105,9 @@ Next.js 15 + Tailwind v4 + componentes no padrão shadcn/ui (azul cobalto, fonte
 - Em produção, sirva por HTTPS e defina `COOKIE_SECURE=true` e `PAINEL_URL=https://...`.
 - Criar o primeiro funcionário: `docker compose exec api node --import tsx dist/scripts/create-staff.js --email ... --name "..." --role gestor` (ou `pnpm staff:create` fora do Docker).
 - Rota nova na API: `GET /staff/stats` (contagens por status/categoria, tempo médio de resolução, criadas por dia).
+
+### Planilha e cadastro manual (painel)
+
+- **/planilha**: tabela com filtros (status, categoria, período, busca) e **Exportar CSV** (todas as linhas do filtro, não só a página; UTF-8 com BOM e separador `;`, abre direto no Excel em português). Células que começariam com `= + - @` ganham um apóstrofo para não virarem fórmula.
+- **Nova ocorrência** (botão nas telas Ocorrências e Planilha): para registrar ligações e atendimentos de balcão. Local escolhido clicando no mapa, foto **opcional**, status inicial à escolha (padrão "Em análise"), e contato de quem relatou (nome e telefone, **cifrados** no banco e visíveis só para funcionários). Rota: `POST /staff/occurrences` (multipart). A origem fica registrada como "Prefeitura" e a criação entra na auditoria.
+- A exportação contém dados pessoais (contato de quem ligou): trate o arquivo conforme a LGPD.

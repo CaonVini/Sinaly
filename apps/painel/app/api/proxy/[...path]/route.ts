@@ -11,10 +11,13 @@ const ROUTES: { method: string; re: RegExp }[] = [
   { method: "GET", re: /^staff\/stats$/ },
   { method: "GET", re: /^staff\/occurrences$/ },
   { method: "GET", re: new RegExp(`^staff/occurrences/${UUID}/audit$`) },
+  { method: "POST", re: /^staff\/occurrences$/ },
   { method: "PATCH", re: new RegExp(`^staff/occurrences/${UUID}$`) },
   { method: "GET", re: new RegExp(`^occurrences/${UUID}$`) },
   { method: "GET", re: new RegExp(`^occurrences/${UUID}/photo$`) },
 ];
+
+const MAX_UPLOAD = 6 * 1024 * 1024; // foto de até 5 MB + campos do formulário
 
 async function handle(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
@@ -23,12 +26,22 @@ async function handle(req: Request, ctx: { params: Promise<{ path: string[] }> }
   if (req.method !== "GET" && !sameOrigin(req)) return deny(403, "Origem não permitida");
 
   const search = new URL(req.url).search;
-  const hasBody = req.method === "PATCH";
-  const res = await apiFetch(`/${joined}${search}`, {
-    method: req.method,
-    body: hasBody ? await req.text() : undefined,
-    headers: hasBody ? { "content-type": "application/json" } : undefined,
-  });
+  let body: BodyInit | undefined;
+  let fwdHeaders: Record<string, string> | undefined;
+  if (req.method === "PATCH") {
+    body = await req.text();
+    fwdHeaders = { "content-type": "application/json" };
+  } else if (req.method === "POST") {
+    // Cadastro com foto (multipart). Limita antes de ler para não bufferizar corpo gigante; a API valida o resto.
+    const declared = Number(req.headers.get("content-length") ?? "0");
+    if (!declared || declared > MAX_UPLOAD) return deny(413, "Arquivo grande demais (máximo 5 MB)");
+    const type = req.headers.get("content-type") ?? "";
+    if (!type.startsWith("multipart/form-data")) return deny(415, "Envie como multipart/form-data");
+    body = await req.arrayBuffer();
+    if (body.byteLength > MAX_UPLOAD) return deny(413, "Arquivo grande demais (máximo 5 MB)");
+    fwdHeaders = { "content-type": type };
+  }
+  const res = await apiFetch(`/${joined}${search}`, { method: req.method, body, headers: fwdHeaders });
   if (res.status === 401) await clearSession();
 
   const headers = new Headers();
@@ -41,4 +54,5 @@ async function handle(req: Request, ctx: { params: Promise<{ path: string[] }> }
 }
 
 export const GET = handle;
+export const POST = handle;
 export const PATCH = handle;

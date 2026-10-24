@@ -10,11 +10,12 @@ import {
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
-import { CATEGORIES, ROLES, STATUSES } from "@sinaly/shared";
+import { CATEGORIES, ROLES, SOURCES, STATUSES } from "@sinaly/shared";
 
 export const roleEnum = pgEnum("role", ROLES);
 export const categoryEnum = pgEnum("category", CATEGORIES);
 export const statusEnum = pgEnum("status", STATUSES);
+export const sourceEnum = pgEnum("occurrence_source", SOURCES);
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -45,6 +46,9 @@ export const occurrences = pgTable(
     photoKey: text("photo_key"),
     status: statusEnum("status").notNull().default("nao_verificado"),
     moderationFlag: text("moderation_flag"),
+    // "prefeitura" = cadastrada por funcionário (ex.: ligação). Contato de quem ligou fica cifrado (JSON).
+    source: sourceEnum("source").notNull().default("app"),
+    reporterContactEnc: text("reporter_contact_enc"),
     // Preenchido ao virar "resolvido" e limpo se for reaberta; a regra dos 5 dias no mapa usa este campo.
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
