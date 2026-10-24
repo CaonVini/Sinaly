@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sinaly · Teste de autenticação</title>
+<style>
+  body{font-family:system-ui,sans-serif;max-width:900px;margin:24px auto;padding:0 16px;color:#1a1a1a}
+  h1{font-size:20px} h2{font-size:15px;margin:0 0 8px}
+  fieldset{border:1px solid #ccc;border-radius:8px;margin:12px 0;padding:12px}
+  legend{font-weight:600;padding:0 6px}
+  label{display:block;font-size:12px;color:#555;margin-top:6px}
+  input,select{width:100%;box-sizing:border-box;padding:6px;font-size:14px}
+  .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}
+  button{margin:10px 6px 0 0;padding:7px 14px;font-size:14px;cursor:pointer}
+  #log{background:#111;color:#d6f5d6;padding:12px;border-radius:8px;white-space:pre-wrap;word-break:break-all;min-height:120px;max-height:420px;overflow:auto;font:12px/1.4 ui-monospace,monospace}
+  .tok{font:11px ui-monospace,monospace;color:#555;word-break:break-all}
+  .warn{background:#fff7e0;border:1px solid #f0d58a;padding:8px;border-radius:6px;font-size:12px}
+</style>
+</head>
+<body>
+<h1>Sinaly · Teste do fluxo de autenticação</h1>
+<p class="warn">Página só para teste. Abra por um servidor local (ex.: <code>python3 -m http.server 5500</code> nesta pasta) e coloque <code>http://localhost:5500</code> em <code>CORS_ORIGINS</code> da API. Não publique esta página.</p>
+
+<fieldset><legend>0. API</legend>
+  <label>URL da API</label><input id="api" value="http://localhost:3333">
+</fieldset>
+
+<fieldset><legend>1. Cadastro do cidadão</legend>
+  <div class="row">
+    <div><label>E-mail</label><input id="reg-email"></div>
+    <div><label>Senha (mín. 10)</label><input id="reg-pass" type="password" value="senha-bem-longa-123"></div>
+  </div>
+  <button onclick="register()">Cadastrar</button>
+</fieldset>
+
+<fieldset><legend>2. Onboarding (depois do cadastro ou do login)</legend>
+  <div class="row">
+    <div><label>Nome</label><input id="ob-first" value="Maria"></div>
+    <div><label>Sobrenome</label><input id="ob-last" value="da Silva"></div>
+    <div><label>Telefone</label><input id="ob-phone" value="(11) 91234-5678"></div>
+    <div><label>CPF</label><input id="ob-cpf" value="529.982.247-25"></div>
+  </div>
+  <div class="row">
+    <div><label>CEP</label><input id="ob-cep" value="01001-000"></div>
+    <div><label>Rua</label><input id="ob-street" value="Praça da Sé"></div>
+    <div><label>Número</label><input id="ob-number" value="10"></div>
+    <div><label>Complemento</label><input id="ob-compl"></div>
+    <div><label>Bairro</label><input id="ob-neigh" value="Sé"></div>
+    <div><label>Cidade</label><input id="ob-city" value="São Paulo"></div>
+    <div><label>UF</label><input id="ob-state" value="SP" maxlength="2"></div>
+  </div>
+  <button onclick="onboarding()">Enviar onboarding</button>
+</fieldset>
+
+<fieldset><legend>3. Login do cidadão</legend>
+  <div class="row">
+    <div><label>E-mail</label><input id="li-email"></div>
+    <div><label>Senha</label><input id="li-pass" type="password" value="senha-bem-longa-123"></div>
+  </div>
+  <button onclick="loginCitizen()">Entrar</button>
+</fieldset>
+
+<fieldset><legend>4. Login do funcionário (senha + código do autenticador)</legend>
+  <div class="row">
+    <div><label>E-mail</label><input id="st-email"></div>
+    <div><label>Senha</label><input id="st-pass" type="password"></div>
+    <div><label>Código TOTP (6 dígitos)</label><input id="st-totp" maxlength="6" inputmode="numeric"></div>
+  </div>
+  <button onclick="loginStaff()">Entrar como funcionário</button>
+</fieldset>
+
+<fieldset><legend>5. Sessão</legend>
+  <button onclick="me()">GET /me</button>
+  <button onclick="refresh()">Renovar token (refresh)</button>
+  <button onclick="logout()">Sair (logout)</button>
+  <button onclick="reuseOld()">Reusar refresh antigo (deve derrubar a sessão)</button>
+  <label>Access token</label><div class="tok" id="t-access">—</div>
+  <label>Refresh token</label><div class="tok" id="t-refresh">—</div>
+</fieldset>
+
+<h2>Respostas</h2>
+<div id="log"></div>
+<button onclick="document.getElementById('log').textContent=''">Limpar</button>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let access = null, refreshTok = null, previousRefresh = null;
+
+$('reg-email').value = 'teste' + Date.now() + '@example.com';
+$('li-email').value = $('reg-email').value;
+$('reg-email').addEventListener('input', () => ($('li-email').value = $('reg-email').value));
+
+function log(title, status, data) {
+  const t = new Date().toLocaleTimeString();
+  $('log').textContent = `[${t}] ${title} → ${status}\n${JSON.stringify(data, null, 2)}\n\n` + $('log').textContent;
+}
+function setTokens(d) {
+  if (!d || !d.accessToken) return;
+  previousRefresh = refreshTok;
+  access = d.accessToken; refreshTok = d.refreshToken;
+  $('t-access').textContent = access; $('t-refresh').textContent = refreshTok;
+}
+async function call(title, method, path, body, useAuth) {
+  const headers = {};
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  if (useAuth && access) headers.Authorization = 'Bearer ' + access;
+  try {
+    const res = await fetch($('api').value.replace(/\/$/, '') + path, {
+      method, headers, body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const text = await res.text();
+    let data; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+    log(title, res.status, data);
+    setTokens(data);
+    return data;
+  } catch (e) {
+    log(title, 'ERRO DE REDE', String(e) + ' (API fora do ar, URL errada ou CORS bloqueando)');
+  }
+}
+
+const register = () => call('POST /auth/register', 'POST', '/auth/register', { email: $('reg-email').value, password: $('reg-pass').value });
+const loginCitizen = () => call('POST /auth/login', 'POST', '/auth/login', { email: $('li-email').value, password: $('li-pass').value });
+const loginStaff = () => call('POST /auth/staff/login', 'POST', '/auth/staff/login', { email: $('st-email').value, password: $('st-pass').value, totp: $('st-totp').value });
+const me = () => call('GET /me', 'GET', '/me', undefined, true);
+const refresh = () => call('POST /auth/refresh', 'POST', '/auth/refresh', { refreshToken: refreshTok });
+const reuseOld = () => call('POST /auth/refresh (token antigo)', 'POST', '/auth/refresh', { refreshToken: previousRefresh });
+async function logout() {
+  const old = access;
+  await call('POST /auth/logout', 'POST', '/auth/logout', undefined, true);
+  access = old; await call('GET /me (token antigo após logout, deve dar 401)', 'GET', '/me', undefined, true);
+  access = refreshTok = null; $('t-access').textContent = $('t-refresh').textContent = '—';
+}
+function onboarding() {
+  const complement = $('ob-compl').value.trim();
+  return call('POST /me/onboarding', 'POST', '/me/onboarding', {
+    firstName: $('ob-first').value, lastName: $('ob-last').value,
+    phone: $('ob-phone').value, cpf: $('ob-cpf').value,
+    address: {
+      cep: $('ob-cep').value, street: $('ob-street').value, number: $('ob-number').value,
+      ...(complement ? { complement } : {}),
+      neighborhood: $('ob-neigh').value, city: $('ob-city').value, state: $('ob-state').value.toUpperCase(),
+    },
+  }, true);
+}
+</script>
+</body>
+</html>
