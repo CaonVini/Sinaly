@@ -9,6 +9,7 @@ const UUID = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-
 const ROUTES: { method: string; re: RegExp }[] = [
   { method: "GET", re: /^me$/ },
   { method: "GET", re: /^staff\/stats$/ },
+  { method: "GET", re: /^staff\/activity$/ },
   { method: "GET", re: /^staff\/occurrences$/ },
   { method: "GET", re: new RegExp(`^staff/occurrences/${UUID}/audit$`) },
   { method: "POST", re: /^staff\/occurrences$/ },

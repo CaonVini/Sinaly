@@ -1,6 +1,7 @@
 "use client";
 import type { Map as LMap, Marker } from "leaflet";
 import { useEffect, useRef } from "react";
+import { PIN_ANCHOR, PIN_SIZE, pinHtml } from "@/lib/pin";
 
 export type Point = { lat: number; lng: number };
 
@@ -23,7 +24,7 @@ export function LocationPicker({ value, onChange, center }: { value: Point | nul
       return;
     }
     if (s.marker) s.marker.setLatLng([v.lat, v.lng]);
-    else s.marker = s.L.marker([v.lat, v.lng], { icon: s.L.divIcon({ className: "sn-pin active", html: '<span style="background:var(--primary)"></span>', iconSize: [18, 18], iconAnchor: [9, 9] }) }).addTo(s.map);
+    else s.marker = s.L.marker([v.lat, v.lng], { icon: s.L.divIcon({ className: "sn-pin", html: pinHtml("brand", null), iconSize: PIN_SIZE, iconAnchor: PIN_ANCHOR }) }).addTo(s.map);
   }
 
   useEffect(() => {

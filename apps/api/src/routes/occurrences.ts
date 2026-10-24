@@ -10,6 +10,7 @@ import {
   createOccurrenceFieldsSchema,
   listQuerySchema,
   mapQuerySchema,
+  activityQuerySchema,
   staffCreateFieldsSchema,
   staffUpdateSchema,
   type Category,
@@ -450,7 +451,7 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
 
   // Números para o painel: contagem por status/categoria, tempo médio até resolver e criadas por dia.
   app.get("/staff/stats", { preHandler: staffOnly }, async () => {
-    const [byStatus, byCategory, resolution, perDay] = await Promise.all([
+    const [byStatus, byCategory, resolution, perDay, stale] = await Promise.all([
       db.select({ key: occurrences.status, total: count() }).from(occurrences).groupBy(occurrences.status),
       db.select({ key: occurrences.category, total: count() }).from(occurrences).groupBy(occurrences.category),
       db.execute(sql`select avg(extract(epoch from (resolved_at - created_at)) / 3600)::float8 as hours
@@ -460,6 +461,7 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
         left join (select created_at::date as day, count(*) as total from occurrences
                    where created_at >= current_date - 13 group by 1) c on c.day = d::date
         order by d`),
+      db.execute(sql`select count(*)::int as total from occurrences where status = 'nao_verificado' and created_at < now() - interval '24 hours'`),
     ]);
     const hours = (resolution.rows[0] as { hours: number | null } | undefined)?.hours ?? null;
     return {
@@ -467,7 +469,32 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
       byCategory: Object.fromEntries(byCategory.map((r) => [r.key, r.total])),
       avgResolutionHours: hours === null ? null : Math.round(hours * 10) / 10,
       perDay: perDay.rows as { day: string; total: number }[],
+      unverifiedOver24h: (stale.rows[0] as { total: number } | undefined)?.total ?? 0,
     };
+  });
+
+  // Atividade recente em todas as ocorrências (quem fez o quê), para a visão geral.
+  app.get("/staff/activity", { preHandler: staffOnly }, async (req) => {
+    const { limit } = parse(activityQuerySchema, req.query);
+    const rows = await db
+      .select({
+        id: occurrenceAudit.id,
+        action: occurrenceAudit.action,
+        occurrenceId: occurrenceAudit.occurrenceId,
+        actorName: users.name,
+        actorRole: occurrenceAudit.actorRole,
+        changes: occurrenceAudit.changes,
+        at: occurrenceAudit.createdAt,
+        category: occurrences.category,
+        description: occurrences.description,
+      })
+      .from(occurrenceAudit)
+      .innerJoin(users, eq(users.id, occurrenceAudit.actorId))
+      .innerJoin(occurrences, eq(occurrences.id, occurrenceAudit.occurrenceId))
+      .orderBy(desc(occurrenceAudit.id))
+      .limit(limit);
+    // Descrição resumida e sem o contato: a visão geral não precisa de mais que isso.
+    return { items: rows.map((r) => ({ ...r, description: r.description.slice(0, 120) })) };
   });
 
   app.get("/staff/occurrences/:id/audit", { preHandler: staffOnly }, async (req) => {

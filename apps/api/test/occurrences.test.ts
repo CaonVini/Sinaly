@@ -285,6 +285,28 @@ describe("visibilidade", () => {
     expect(body.avgResolutionHours).toBeNull();
     expect(body.perDay).toHaveLength(14);
     expect(body.perDay.at(-1).total).toBe(2);
+    expect(body.unverifiedOver24h).toBe(0);
+    await pool.query("update occurrences set created_at = now() - interval '30 hours' where status = 'nao_verificado'");
+    expect((await send("GET", "/staff/stats", st)).json().unverifiedOver24h).toBe(1);
+  });
+
+  it("atividade recente: só funcionário, mais nova primeiro, sem vazar contato", async () => {
+    const a = await citizen("a@example.com", "529.982.247-25");
+    const st = await staff();
+    const o = await create(a.token);
+    await patch(st, o.id, { status: "em_analise", note: "ok" });
+    await multipartPost("/staff/occurrences", st, { category: "seguranca", description: "Moradora ligou relatando poste caído", lat: String(SP.lat), lng: String(SP.lng), reporterName: "Dona Rita", reporterPhone: "11912345678" });
+    expect((await send("GET", "/staff/activity", a.token)).statusCode).toBe(403);
+    expect((await send("GET", "/staff/activity")).statusCode).toBe(401);
+    const res = await send("GET", "/staff/activity?limit=2", st);
+    expect(res.statusCode).toBe(200);
+    const items = res.json().items;
+    expect(items).toHaveLength(2);
+    expect(items[0].action).toBe("create");
+    expect(items[0].actorName).toBe("Func Prefeitura");
+    expect(items[1].action).toBe("status_change");
+    expect(JSON.stringify(items)).not.toContain("91234");
+    expect((await send("GET", "/staff/activity?limit=500", st)).statusCode).toBe(400);
   });
 
   it("depois que a prefeitura aprova, todos veem no mapa, no detalhe e na foto", async () => {

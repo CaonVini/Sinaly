@@ -34,6 +34,19 @@ export type Stats = {
   byCategory: Partial<Record<Category, number>>;
   avgResolutionHours: number | null;
   perDay: { day: string; total: number }[];
+  unverifiedOver24h: number;
+};
+
+export type Activity = {
+  id: number;
+  action: string;
+  occurrenceId: string;
+  actorName: string | null;
+  actorRole: string;
+  changes: Record<string, { from?: unknown; to: unknown }>;
+  at: string;
+  category: Category;
+  description: string;
 };
 
 export class ApiError extends Error {

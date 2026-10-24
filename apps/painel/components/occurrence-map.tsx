@@ -2,7 +2,7 @@
 import type { Map as LMap, Marker } from "leaflet";
 import { useEffect, useRef } from "react";
 import type { Occurrence } from "@/lib/client";
-import { statusColor } from "@/components/status-badge";
+import { PIN_ANCHOR, PIN_SIZE, pinHtml } from "@/lib/pin";
 
 const BR_CENTER: [number, number] = [-14.2, -51.9];
 
@@ -45,12 +45,12 @@ export function OccurrenceMap({ items, selectedId, onSelect, fitKey }: { items: 
     for (const o of items) {
       const icon = L.divIcon({
         className: `sn-pin${o.id === selectedId ? " active" : ""}`,
-        html: `<span style="background:${statusColor(o.status)}"></span>`,
-        iconSize: [18, 18],
-        iconAnchor: [9, 9],
+        html: pinHtml(o.status, o.category),
+        iconSize: PIN_SIZE,
+        iconAnchor: PIN_ANCHOR,
       });
       const cur = markers.get(o.id);
-      if (cur) cur.setIcon(icon).setLatLng([o.lat, o.lng]);
+      if (cur) cur.setIcon(icon).setLatLng([o.lat, o.lng]).setZIndexOffset(o.id === selectedId ? 1000 : 0);
       else markers.set(o.id, L.marker([o.lat, o.lng], { icon, keyboard: false }).on("click", () => onSelectRef.current(o.id)).addTo(map));
     }
     if (items.length && lastFit.current !== fitKey) {

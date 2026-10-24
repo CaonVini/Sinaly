@@ -150,6 +150,8 @@ export const listQuerySchema = z.object({
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
+export const activityQuerySchema = z.object({ limit: limit(50, 12) });
+
 export const notificationsQuerySchema = z.object({
   limit: limit(100, 30),
   cursor: z.string().max(200).optional(),
