@@ -3,12 +3,22 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sinaly · Teste de ocorrências com mapa</title>
+<title>Sinaly · Testes (mapa, sessão e regras)</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <style>
   *{box-sizing:border-box}
-  body{font-family:system-ui,sans-serif;margin:0;color:#1a1a1a;display:grid;grid-template-columns:380px 1fr;height:100vh}
+  body{font-family:system-ui,sans-serif;margin:0;color:#1a1a1a;display:flex;flex-direction:column;height:100vh}
+  nav{display:flex;gap:2px;background:#222;padding:6px 8px 0}
+  nav button{margin:0;padding:8px 14px;border:0;border-radius:6px 6px 0 0;background:#444;color:#ddd;font-size:13px}
+  nav button.on{background:#fafafa;color:#000;font-weight:600}
+  .tab{display:none;flex:1;min-height:0}
+  .tab.on{display:grid}
+  #tab-map{grid-template-columns:380px 1fr}
+  .pane{overflow:auto;padding:14px;max-width:900px}
+  .res{font:13px/1.6 system-ui,sans-serif;margin-top:10px}
+  .res .info{white-space:pre-line}.res .ok{color:#15803d}.res .bad{color:#b91c1c;font-weight:600}.res .info{color:#555}
+  .tok{font:11px ui-monospace,monospace;word-break:break-all;color:#555}
   aside{overflow:auto;padding:12px;border-right:1px solid #ddd;background:#fafafa}
   main{display:grid;grid-template-rows:1fr 190px;min-width:0}
   #map{min-height:300px}
@@ -33,6 +43,12 @@
 </style>
 </head>
 <body>
+<nav>
+  <button class="on" data-tab="map">Mapa e ocorrências</button>
+  <button data-tab="auth">Sessão e autenticação</button>
+  <button data-tab="rules">Verificação das regras</button>
+</nav>
+<div class="tab on" id="tab-map">
 <aside>
   <h1>Sinaly · ocorrências</h1>
   <p class="warn">Só para teste. Sirva por <code>python -m http.server 5500</code> e coloque <code>http://localhost:5500</code> em <code>CORS_ORIGINS</code>. Os tokens ficam só na memória da página.</p>
@@ -94,6 +110,33 @@
   <div id="map"></div>
   <div id="log"></div>
 </main>
+</div>
+
+<div class="tab" id="tab-auth"><div class="pane">
+  <h1>Sessão e autenticação</h1>
+  <p>Usa a sessão aberta na aba <b>Mapa e ocorrências</b> (cadastro, login de cidadão ou de funcionário).</p>
+  <div id="who2" style="font-weight:600">Visitante (não logado)</div>
+  <button id="a-me">GET /me</button>
+  <button id="a-refresh">Renovar token (refresh)</button>
+  <button id="a-reuse">Reusar o refresh antigo (deve dar 401 e derrubar a sessão)</button>
+  <button id="a-logout">Sair (logout)</button>
+  <button id="a-tokens">Mostrar/ocultar tokens</button>
+  <div class="tok" id="a-tok" style="margin-top:8px"></div>
+  <h2 style="font-size:14px;margin-top:16px">Respostas</h2>
+  <div id="log2" style="background:#111;color:#d6f5d6;padding:8px;white-space:pre-wrap;word-break:break-all;font:11px/1.35 ui-monospace,monospace;min-height:120px"></div>
+</div></div>
+
+<div class="tab" id="tab-rules"><div class="pane">
+  <h1>Verificação automática das regras</h1>
+  <p>Cria cidadãos descartáveis e confere as regras de acesso, visibilidade, status, auditoria e notificações. Para a parte da prefeitura, informe um funcionário (o código TOTP vale 30 s, então digite-o e clique em seguida).</p>
+  <div class="row" style="max-width:640px">
+    <div><label>E-mail do funcionário</label><input id="r-email"></div>
+    <div><label>Senha</label><input id="r-pass" type="password"></div>
+    <div><label>Código TOTP</label><input id="r-totp" maxlength="6" inputmode="numeric"></div>
+  </div>
+  <button id="r-run">Rodar verificações</button>
+  <div class="res" id="r-out"></div>
+</div></div>
 
 <script>
 const $ = (id) => document.getElementById(id);
@@ -108,7 +151,7 @@ const NEXT = {
 };
 
 // ---------- estado ----------
-const st = { access: null, refresh: null, role: null, email: null };
+const st = { access: null, refresh: null, prevRefresh: null, role: null, email: null };
 const apiBase = () => $('api').value.replace(/\/$/, '');
 const isStaff = () => st.role === 'servidor' || st.role === 'gestor';
 
@@ -125,6 +168,7 @@ $('legend').append(...Object.values(STATUS).map(([label, color]) => {
 function log(title, status, data) {
   const line = `[${new Date().toLocaleTimeString()}] ${title} → ${status}` + (data === undefined ? '' : ' ' + JSON.stringify(data).slice(0, 400));
   $('log').textContent = line + '\n' + $('log').textContent;
+  $('log2').textContent = line + '\n' + $('log2').textContent;
 }
 
 // ---------- API ----------
@@ -138,7 +182,7 @@ async function refreshTokens() {
   if (!st.refresh) return false;
   const res = await raw('POST', '/auth/refresh', { json: { refreshToken: st.refresh }, auth: false });
   if (!res.ok) return false;
-  const d = await res.json(); st.access = d.accessToken; st.refresh = d.refreshToken; return true;
+  const d = await res.json(); st.access = d.accessToken; st.prevRefresh = st.refresh; st.refresh = d.refreshToken; return true;
 }
 async function api(title, method, path, opts = {}) {
   try {
@@ -158,7 +202,7 @@ function setSession(d, email) {
   renderWho(); refreshAll();
 }
 function renderWho() {
-  $('who').textContent = st.access ? `${st.email} (${st.role})` : 'Visitante (não logado)';
+  $('who').textContent = $('who2').textContent = st.access ? `${st.email} (${st.role})` : 'Visitante (não logado)';
   $('box-new').classList.toggle('hidden', st.role !== 'cidadao');
   $('box-notif').classList.toggle('hidden', st.role !== 'cidadao');
 }
@@ -300,6 +344,148 @@ $('btn-create').onclick = async () => {
 };
 
 renderWho(); loadPublic();
+
+// ---------- abas ----------
+document.querySelectorAll('nav button').forEach((b) => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach((x) => x.classList.toggle('on', x === b));
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('on', t.id === 'tab-' + b.dataset.tab));
+  if (b.dataset.tab === 'map') map.invalidateSize();
+});
+
+// ---------- aba: sessão ----------
+let showTok = false;
+const renderTok = () => { $('a-tok').textContent = showTok && st.access ? `access: ${st.access}\nrefresh: ${st.refresh}` : ''; };
+$('a-tokens').onclick = () => { showTok = !showTok; renderTok(); };
+$('a-me').onclick = () => api('GET /me', 'GET', '/me');
+$('a-refresh').onclick = async () => { const ok = await refreshTokens(); log('POST /auth/refresh', ok ? 200 : 401); renderTok(); };
+$('a-reuse').onclick = async () => {
+  if (!st.prevRefresh) return log('reuso do refresh antigo', 'faltou', 'renove o token uma vez antes');
+  const r = await raw('POST', '/auth/refresh', { json: { refreshToken: st.prevRefresh }, auth: false });
+  log('POST /auth/refresh (token antigo)', r.status);
+};
+$('a-logout').onclick = () => $('btn-logout').onclick();
+
+// ---------- aba: verificação das regras ----------
+function validCpf() {                                   // gera CPF válido aleatório
+  const d = Array.from({ length: 9 }, () => Math.floor(Math.random() * 10));
+  for (let n = 9; n < 11; n++) { let sum = 0; for (let i = 0; i < n; i++) sum += d[i] * (n + 1 - i); const r = (sum * 10) % 11; d.push(r === 10 ? 0 : r); }
+  return d.join('');
+}
+const pngBlob = () => new Promise((res) => { const c = document.createElement('canvas'); c.width = 800; c.height = 600; const x = c.getContext('2d'); x.fillStyle = '#cc3333'; x.fillRect(0, 0, 800, 600); c.toBlob(res, 'image/png'); });
+async function http(token, method, path, { json, form } = {}) {
+  const headers = {}; if (token) headers.Authorization = 'Bearer ' + token; if (json !== undefined) headers['Content-Type'] = 'application/json';
+  const res = await fetch(apiBase() + path, { method, headers, body: form ?? (json === undefined ? undefined : JSON.stringify(json)) });
+  const text = await res.text(); let data = null; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  return { status: res.status, data };
+}
+async function newCitizen(label) {
+  const email = `regra-${label}-${Date.now()}-${Math.floor(Math.random() * 1e4)}@example.com`;
+  const reg = await http(null, 'POST', '/auth/register', { json: { email, password: 'senha-bem-longa-123' } });
+  return { token: reg.data?.accessToken, email, cpf: validCpf(), reg };
+}
+const onboard = (c) => http(c.token, 'POST', '/me/onboarding', { json: { firstName: 'Teste', lastName: 'Verificação', phone: '11912345678', cpf: c.cpf,
+  address: { cep: '01001000', street: 'Praça da Sé', number: '1', neighborhood: 'Sé', city: 'São Paulo', state: 'SP' } } });
+async function newOccurrence(token, over = {}) {
+  const f = new FormData();
+  const v = { category: 'iluminacao', description: 'Poste apagado há dias (verificação automática)', lat: '-23.5505', lng: '-46.6333', ...over };
+  for (const [k, val] of Object.entries(v)) f.append(k, val);
+  f.append('photo', await pngBlob(), 'foto.png');
+  return http(token, 'POST', '/occurrences', { form: f });
+}
+const BBOX = '-46.70,-23.60,-46.55,-23.50';
+const idsOnMap = async (token, extra = '') => (await http(token, 'GET', `/occurrences/map?bbox=${BBOX}${extra}`)).data?.items?.map((i) => i.id) ?? [];
+
+$('r-run').onclick = async () => {
+  const out = $('r-out'); out.replaceChildren(); let fails = 0;
+  const line = (cls, text) => { const d = document.createElement('div'); d.className = cls; d.textContent = text; out.append(d); };
+  const check = (name, cond, extra = '') => { if (!cond) fails++; line(cond ? 'ok' : 'bad', `${cond ? '✓' : '✗'} ${name}${cond ? '' : ' ' + extra}`); };
+  const section = (t) => line('info', '\n— ' + t);
+  try {
+    // funcionário primeiro: o código TOTP expira em 30 s
+    let staff = null;
+    if ($('r-email').value && $('r-pass').value && $('r-totp').value) {
+      const l = await http(null, 'POST', '/auth/staff/login', { json: { email: $('r-email').value, password: $('r-pass').value, totp: $('r-totp').value } });
+      check('login do funcionário (senha + TOTP)', l.status === 200, `(HTTP ${l.status})`);
+      staff = l.data?.accessToken ?? null;
+    } else line('info', '(sem credenciais de funcionário: as verificações da prefeitura serão puladas)');
+
+    section('Cidadãos e criação');
+    const A = await newCitizen('a'), B = await newCitizen('b'), C = await newCitizen('c');
+    check('cadastro dos cidadãos A, B e C', [A, B, C].every((x) => x.reg.status === 201));
+    check('A conclui o onboarding', (await onboard(A)).status === 201);
+    check('B conclui o onboarding', (await onboard(B)).status === 201);
+    check('cidadão SEM onboarding não registra ocorrência', (await newOccurrence(C.token)).status === 403);
+    const created = await newOccurrence(A.token);
+    const occ = created.data;
+    check('A registra ocorrência com foto e local (201)', created.status === 201, JSON.stringify(created.data));
+    check('status inicial é "nao_verificado"', occ?.status === 'nao_verificado');
+    check('local gravado com precisão', Math.abs(occ?.lat + 23.5505) < 1e-6 && Math.abs(occ?.lng + 46.6333) < 1e-6);
+    check('latitude inválida é recusada (400)', (await newOccurrence(A.token, { lat: '91' })).status === 400);
+    check('descrição curta é recusada (400)', (await newOccurrence(A.token, { description: 'curta' })).status === 400);
+    const bad = new FormData(); for (const [k, v] of Object.entries({ category: 'iluminacao', description: 'Arquivo falso com nome de imagem', lat: '-23.55', lng: '-46.63' })) bad.append(k, v);
+    bad.append('photo', new Blob(['<svg xmlns="http://www.w3.org/2000/svg"><scr' + 'ipt>alert(1)</scr' + 'ipt></svg>'], { type: 'image/jpeg' }), 'foto.jpg');
+    check('arquivo que não é imagem (SVG disfarçado de JPG) é recusado (400)', (await http(A.token, 'POST', '/occurrences', { form: bad })).status === 400);
+
+    section('Visibilidade: ocorrência não verificada');
+    check('o dono vê o detalhe', (await http(A.token, 'GET', `/occurrences/${occ.id}`)).status === 200);
+    check('o dono vê a foto', (await http(A.token, 'GET', `/occurrences/${occ.id}/photo`)).status === 200);
+    check('outro cidadão NÃO vê o detalhe (404)', (await http(B.token, 'GET', `/occurrences/${occ.id}`)).status === 404);
+    check('outro cidadão NÃO vê a foto (404)', (await http(B.token, 'GET', `/occurrences/${occ.id}/photo`)).status === 404);
+    check('visitante NÃO vê o detalhe (404)', (await http(null, 'GET', `/occurrences/${occ.id}`)).status === 404);
+    check('mapa público NÃO mostra (visitante)', !(await idsOnMap(null)).includes(occ.id));
+    check('mapa público NÃO mostra (outro cidadão)', !(await idsOnMap(B.token)).includes(occ.id));
+    check('"minhas ocorrências" do B está vazio', ((await http(B.token, 'GET', '/me/occurrences')).data?.items ?? []).length === 0);
+    check('"minhas ocorrências" do A tem a ocorrência', ((await http(A.token, 'GET', '/me/occurrences')).data?.items ?? []).some((i) => i.id === occ.id));
+
+    section('Ninguém além da prefeitura altera');
+    check('dono NÃO altera status (403)', (await http(A.token, 'PATCH', `/staff/occurrences/${occ.id}`, { json: { status: 'resolvido' } })).status === 403);
+    check('dono NÃO altera a descrição (403)', (await http(A.token, 'PATCH', `/staff/occurrences/${occ.id}`, { json: { description: 'Descrição alterada pelo cidadão' } })).status === 403);
+    check('outro cidadão NÃO altera (403)', (await http(B.token, 'PATCH', `/staff/occurrences/${occ.id}`, { json: { status: 'em_analise' } })).status === 403);
+    check('visitante NÃO altera (401)', (await http(null, 'PATCH', `/staff/occurrences/${occ.id}`, { json: { status: 'em_analise' } })).status === 401);
+    check('cidadão NÃO acessa a fila da prefeitura (403)', (await http(A.token, 'GET', '/staff/occurrences')).status === 403);
+    check('cidadão NÃO lê a auditoria (403)', (await http(A.token, 'GET', `/staff/occurrences/${occ.id}/audit`)).status === 403);
+
+    if (staff) {
+      section('Prefeitura');
+      check('funcionário vê a ocorrência na fila', ((await http(staff, 'GET', '/staff/occurrences?status=nao_verificado&limit=100')).data?.items ?? []).some((i) => i.id === occ.id));
+      check('transição inválida (direto para resolvido) é recusada (409)', (await http(staff, 'PATCH', `/staff/occurrences/${occ.id}`, { json: { status: 'resolvido' } })).status === 409);
+      check('recusar sem motivo é recusado (400)', (await http(staff, 'PATCH', `/staff/occurrences/${occ.id}`, { json: { status: 'recusado' } })).status === 400);
+      check('campo desconhecido é recusado (400)', (await http(staff, 'PATCH', `/staff/occurrences/${occ.id}`, { json: { status: 'em_analise', authorId: B.email } })).status === 400);
+      const ap = await http(staff, 'PATCH', `/staff/occurrences/${occ.id}`, { json: { status: 'em_analise', note: 'Verificada pela equipe' } });
+      check('funcionário muda para "Em análise" (200)', ap.status === 200 && ap.data?.status === 'em_analise', `(HTTP ${ap.status})`);
+
+      section('Depois de aprovada');
+      check('outro cidadão agora vê o detalhe', (await http(B.token, 'GET', `/occurrences/${occ.id}`)).status === 200);
+      check('visitante vê no mapa público', (await idsOnMap(null)).includes(occ.id));
+      check('visitante vê a foto', (await http(null, 'GET', `/occurrences/${occ.id}/photo`)).status === 200);
+      const pub = (await http(null, 'GET', `/occurrences/${occ.id}`)).data;
+      check('detalhe público sem histórico e sem id do autor', pub && pub.history === undefined && pub.authorId === undefined);
+
+      section('Notificações');
+      const nA = (await http(A.token, 'GET', '/me/notifications')).data;
+      check('o dono recebeu notificação da mudança de status', nA?.unreadCount >= 1 && nA.items.some((n) => n.toStatus === 'em_analise' && n.body.includes('Verificada pela equipe')));
+      check('o outro cidadão NÃO recebeu', ((await http(B.token, 'GET', '/me/notifications')).data?.items ?? []).length === 0);
+      const nid = nA?.items?.[0]?.id;
+      check('outro cidadão NÃO marca a notificação alheia (404)', (await http(B.token, 'POST', `/me/notifications/${nid}/read`)).status === 404);
+      check('o dono marca como lida (204)', (await http(A.token, 'POST', `/me/notifications/${nid}/read`)).status === 204);
+
+      section('Resolvida, auditoria e filtro');
+      const rs = await http(staff, 'PATCH', `/staff/occurrences/${occ.id}`, { json: { status: 'resolvido', note: 'Lâmpada trocada' } });
+      check('funcionário marca como resolvida', rs.status === 200 && !!rs.data?.resolvedAt);
+      check('recém-resolvida continua no mapa (some só após 5 dias)', (await idsOnMap(null)).includes(occ.id));
+      check('filtro "resolvidos" também mostra', (await idsOnMap(null, '&includeResolved=true')).includes(occ.id));
+      const edit = await http(staff, 'PATCH', `/staff/occurrences/${occ.id}`, { json: { category: 'seguranca' } });
+      check('funcionário edita a categoria', edit.status === 200 && edit.data?.category === 'seguranca');
+      const audit = (await http(staff, 'GET', `/staff/occurrences/${occ.id}/audit`)).data?.items ?? [];
+      check('auditoria registra criação, mudanças de status e edição, com autor e hora',
+        audit.map((a) => a.action).join(',') === 'create,status_change,status_change,update' && audit.every((a) => a.actorId && a.at),
+        JSON.stringify(audit.map((a) => a.action)));
+      check('auditoria identifica o funcionário', audit[1]?.actorRole === 'servidor' || audit[1]?.actorRole === 'gestor');
+      line('info', '\n(A regra dos 5 dias depende de mexer na data no banco e é coberta pelos testes automáticos do servidor.)');
+    }
+  } catch (e) { fails++; line('bad', '✗ erro inesperado: ' + e); }
+  line(fails ? 'bad' : 'ok', `\n${fails ? fails + ' verificação(ões) falharam' : 'Todas as verificações passaram'}`);
+};
 </script>
 </body>
 </html>
