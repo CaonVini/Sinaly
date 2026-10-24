@@ -11,6 +11,7 @@
     "typecheck": "pnpm -r typecheck",
     "db:generate": "pnpm --filter @sinaly/api db:generate",
     "db:migrate": "pnpm --filter @sinaly/api db:migrate",
-    "db:seed": "pnpm --filter @sinaly/api db:seed"
+    "staff:create": "pnpm --filter @sinaly/api staff:create",
+    "test": "pnpm --filter @sinaly/api test"
   }
 }

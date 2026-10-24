@@ -7,6 +7,19 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env: { POSTGRES_PASSWORD: test, POSTGRES_DB: sinaly_test }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgres://postgres:test@localhost:5432/sinaly_test
+      JWT_SECRET: ci-only-jwt-secret-ci-only-jwt-secret-0000
+      CPF_HASH_PEPPER: ci-only-pepper-ci-only-pepper-0000000
+      DATA_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -17,3 +30,5 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm --filter @sinaly/api build
+      - run: pnpm db:migrate
+      - run: pnpm test
