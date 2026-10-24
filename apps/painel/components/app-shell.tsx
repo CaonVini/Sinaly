@@ -20,15 +20,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { data: stats } = useApi<Stats>("staff/stats");
   const pending = stats?.byStatus.nao_verificado ?? 0;
 
-  const sections: { label: string; items: Item[] }[] = [
-    { label: "Geral", items: [{ href: "/visao-geral", label: "Visão geral", icon: LayoutDashboard }] },
-    {
-      label: "Atendimento",
-      items: [
-        { href: "/ocorrencias", label: "Ocorrências", icon: ListChecks, badge: pending },
-        { href: "/planilha", label: "Planilha", icon: Table2 },
-      ],
-    },
+  const items: Item[] = [
+    { href: "/visao-geral", label: "Visão geral", icon: LayoutDashboard },
+    { href: "/ocorrencias", label: "Ocorrências", icon: ListChecks, badge: pending },
+    { href: "/planilha", label: "Planilha", icon: Table2 },
   ];
 
   async function logout() {
@@ -49,11 +44,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           </Button>
         </div>
 
-        <nav className="flex gap-1 overflow-x-auto px-3 pb-2 md:flex-1 md:flex-col md:gap-6 md:overflow-visible md:px-4 md:pt-4 md:pb-0" aria-label="Principal">
-          {sections.map((sec) => (
-            <div key={sec.label} className="flex gap-1 md:flex-col md:gap-1">
-              <p className="hidden px-3 pb-1 text-[0.7rem] font-semibold tracking-wider text-muted-foreground uppercase md:block">{sec.label}</p>
-              {sec.items.map(({ href, label, icon: Icon, badge }) => {
+        <nav className="flex gap-1 overflow-x-auto px-3 pb-2 md:flex-1 md:flex-col md:overflow-visible md:px-4 md:pt-4 md:pb-0" aria-label="Principal">
+          {items.map(({ href, label, icon: Icon, badge }) => {
                 const active = path.startsWith(href);
                 return (
                   <Link
@@ -75,9 +67,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     )}
                   </Link>
                 );
-              })}
-            </div>
-          ))}
+          })}
         </nav>
 
         <div className="hidden space-y-3 border-t p-4 md:block">
