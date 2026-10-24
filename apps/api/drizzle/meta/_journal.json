@@ -15,6 +15,13 @@
       "when": 1792805518204,
       "tag": "0001_grey_amphibian",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792810554496,
+      "tag": "0002_rainy_randall",
+      "breakpoints": true
     }
   ]
 }

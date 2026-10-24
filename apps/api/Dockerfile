@@ -17,6 +17,7 @@ RUN pnpm --filter @sinaly/api build
 FROM base AS runtime
 ENV NODE_ENV=production
 COPY --from=build /repo /repo
+RUN mkdir -p /data/uploads && chown node:node /data/uploads
 USER node
 WORKDIR /repo/apps/api
 EXPOSE 3333

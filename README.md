@@ -75,3 +75,22 @@ Gere os segredos do `.env` com `openssl rand -base64 48` (JWT e pepper) e `opens
 export DATABASE_URL=postgres://...@localhost:5432/sinaly_test   # banco de TESTE (as tabelas são apagadas!)
 pnpm db:migrate && pnpm test
 ```
+
+## Ocorrências, mapa, auditoria e notificações
+
+| Rota | Quem | Observação |
+| --- | --- | --- |
+| `POST /occurrences` | cidadão com onboarding | multipart: `category`, `description`, `lat`, `lng`, `photo` (opcional). Status inicial: `nao_verificado` |
+| `GET /occurrences/map?bbox=minLng,minLat,maxLng,maxLat` | público | só `em_analise`, `em_atendimento` e `resolvido` (resolvido some após 5 dias; `includeResolved=true` traz todos) |
+| `GET /occurrences/:id` e `/photo` | público, dono ou prefeitura | não verificadas/recusadas: só dono e prefeitura (os demais recebem 404) |
+| `GET /me/occurrences` | cidadão | todas as suas, qualquer status |
+| `GET /staff/occurrences` | prefeitura | fila com filtros `status`, `category`, `bbox` |
+| `PATCH /staff/occurrences/:id` | prefeitura | status (com transições válidas), categoria, descrição, local; motivo obrigatório ao recusar |
+| `PUT /staff/occurrences/:id/photo` | prefeitura | troca a foto |
+| `GET /staff/occurrences/:id/audit` | prefeitura | trilha de auditoria |
+| `GET /me/notifications`, `POST /me/notifications/:id/read`, `POST /me/notifications/read-all` | logado | avisos de mudança de status |
+
+- **Auditoria:** tabela `occurrence_audit` (quem, quando, o que mudou de/para). Um trigger do Postgres bloqueia `UPDATE` e `DELETE`.
+- **Fotos:** gravadas em disco (`UPLOAD_DIR`, volume Docker `uploads`), reprocessadas com `sharp` (valida o conteúdo, remove EXIF/GPS, 1600 px + miniatura de 400 px). Nunca servidas como arquivo estático: sempre pela rota, que checa a visibilidade. Para trocar por S3/R2, reescreva só `apps/api/src/storage.ts`.
+- **Página de teste com mapa:** `tools/teste-ocorrencias.html` (Leaflet + OpenStreetMap).
+- **Faça backup do volume `uploads`** junto com o banco.

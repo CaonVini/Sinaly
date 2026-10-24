@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sinaly · Teste de ocorrências com mapa</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<style>
+  *{box-sizing:border-box}
+  body{font-family:system-ui,sans-serif;margin:0;color:#1a1a1a;display:grid;grid-template-columns:380px 1fr;height:100vh}
+  aside{overflow:auto;padding:12px;border-right:1px solid #ddd;background:#fafafa}
+  main{display:grid;grid-template-rows:1fr 190px;min-width:0}
+  #map{min-height:300px}
+  h1{font-size:16px;margin:0 0 8px}
+  fieldset{border:1px solid #ccc;border-radius:8px;margin:8px 0;padding:8px 10px}
+  legend{font-weight:600;font-size:13px;padding:0 4px}
+  label{display:block;font-size:11px;color:#555;margin-top:5px}
+  input,select,textarea{width:100%;padding:5px;font-size:13px}
+  textarea{height:60px}
+  button{margin:6px 4px 0 0;padding:5px 10px;font-size:12px;cursor:pointer}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .warn{background:#fff7e0;border:1px solid #f0d58a;padding:6px;border-radius:6px;font-size:11px}
+  #log{background:#111;color:#d6f5d6;padding:8px;white-space:pre-wrap;word-break:break-all;overflow:auto;font:11px/1.35 ui-monospace,monospace}
+  #who{font-size:12px;font-weight:600;margin:4px 0}
+  .legend span{display:inline-block;margin-right:8px;font-size:11px}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:3px;vertical-align:middle}
+  .notif{font-size:12px;border-bottom:1px solid #eee;padding:4px 0}
+  .notif.unread{font-weight:600}
+  .popup img{max-width:200px;display:block;margin:6px 0;border-radius:4px}
+  .popup .acts button{margin:4px 4px 0 0}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<aside>
+  <h1>Sinaly · ocorrências</h1>
+  <p class="warn">Só para teste. Sirva por <code>python -m http.server 5500</code> e coloque <code>http://localhost:5500</code> em <code>CORS_ORIGINS</code>. Os tokens ficam só na memória da página.</p>
+
+  <fieldset><legend>API</legend>
+    <input id="api" value="http://localhost:3333">
+  </fieldset>
+
+  <fieldset><legend>Sessão</legend>
+    <div id="who">Visitante (não logado)</div>
+    <div class="row">
+      <div><label>E-mail do cidadão</label><input id="c-email"></div>
+      <div><label>Senha</label><input id="c-pass" type="password" value="senha-bem-longa-123"></div>
+    </div>
+    <button id="btn-register">Cadastrar cidadão</button>
+    <button id="btn-login">Entrar</button>
+    <button id="btn-onboard">Onboarding de teste</button>
+    <div class="row">
+      <div><label>CPF do onboarding</label><input id="c-cpf" value="529.982.247-25"></div>
+      <div></div>
+    </div>
+    <hr>
+    <div class="row">
+      <div><label>E-mail do funcionário</label><input id="s-email"></div>
+      <div><label>Senha</label><input id="s-pass" type="password"></div>
+      <div><label>Código TOTP</label><input id="s-totp" maxlength="6" inputmode="numeric"></div>
+    </div>
+    <button id="btn-staff">Entrar como funcionário</button>
+    <button id="btn-logout">Sair</button>
+  </fieldset>
+
+  <fieldset><legend>Mapa</legend>
+    <label><input type="checkbox" id="f-resolved" style="width:auto"> Mostrar resolvidos (inclusive com mais de 5 dias)</label>
+    <label>Categoria</label>
+    <select id="f-cat"><option value="">Todas</option></select>
+    <div class="legend" style="margin-top:6px" id="legend"></div>
+  </fieldset>
+
+  <fieldset id="box-new"><legend>Nova ocorrência (cidadão)</legend>
+    <p style="font-size:12px;margin:0">1) Clique no mapa para marcar o local (arraste o pino para ajustar).</p>
+    <div class="row">
+      <div><label>Latitude</label><input id="n-lat" readonly></div>
+      <div><label>Longitude</label><input id="n-lng" readonly></div>
+    </div>
+    <button id="btn-geo">Usar minha localização</button>
+    <label>Categoria</label><select id="n-cat"></select>
+    <label>Descrição (mín. 10 caracteres)</label><textarea id="n-desc"></textarea>
+    <label>Foto (JPEG, PNG ou WebP, até 5 MB)</label><input id="n-photo" type="file" accept="image/jpeg,image/png,image/webp">
+    <button id="btn-create">Enviar ocorrência</button>
+  </fieldset>
+
+  <fieldset id="box-notif"><legend>Notificações <span id="unread"></span></legend>
+    <button id="btn-readall">Marcar todas como lidas</button>
+    <div id="notifs"></div>
+  </fieldset>
+</aside>
+
+<main>
+  <div id="map"></div>
+  <div id="log"></div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const STATUS = {
+  nao_verificado: ['Não verificado', '#6b7280'], em_analise: ['Em análise', '#2563eb'],
+  em_atendimento: ['Em atendimento', '#f59e0b'], resolvido: ['Resolvido', '#16a34a'], recusado: ['Recusado', '#dc2626'],
+};
+const CATS = { seguranca: 'Segurança', infraestrutura: 'Infraestrutura', sinalizacao: 'Sinalização', saneamento: 'Saneamento', iluminacao: 'Iluminação' };
+const NEXT = {
+  nao_verificado: ['em_analise', 'recusado'], em_analise: ['em_atendimento', 'resolvido', 'recusado'],
+  em_atendimento: ['em_analise', 'resolvido'], resolvido: ['em_atendimento'], recusado: ['nao_verificado'],
+};
+
+// ---------- estado ----------
+const st = { access: null, refresh: null, role: null, email: null };
+const apiBase = () => $('api').value.replace(/\/$/, '');
+const isStaff = () => st.role === 'servidor' || st.role === 'gestor';
+
+$('c-email').value = 'teste' + Date.now() + '@example.com';
+for (const [k, v] of Object.entries(CATS)) {
+  $('f-cat').add(new Option(v, k)); $('n-cat').add(new Option(v, k));
+}
+$('legend').append(...Object.values(STATUS).map(([label, color]) => {
+  const s = document.createElement('span');
+  const d = document.createElement('i'); d.className = 'dot'; d.style.background = color;
+  s.append(d, label); return s;
+}));
+
+function log(title, status, data) {
+  const line = `[${new Date().toLocaleTimeString()}] ${title} → ${status}` + (data === undefined ? '' : ' ' + JSON.stringify(data).slice(0, 400));
+  $('log').textContent = line + '\n' + $('log').textContent;
+}
+
+// ---------- API ----------
+async function raw(method, path, { json, form, auth = true } = {}) {
+  const headers = {};
+  if (json !== undefined) headers['Content-Type'] = 'application/json';
+  if (auth && st.access) headers.Authorization = 'Bearer ' + st.access;
+  return fetch(apiBase() + path, { method, headers, body: form ?? (json === undefined ? undefined : JSON.stringify(json)) });
+}
+async function refreshTokens() {
+  if (!st.refresh) return false;
+  const res = await raw('POST', '/auth/refresh', { json: { refreshToken: st.refresh }, auth: false });
+  if (!res.ok) return false;
+  const d = await res.json(); st.access = d.accessToken; st.refresh = d.refreshToken; return true;
+}
+async function api(title, method, path, opts = {}) {
+  try {
+    let res = await raw(method, path, opts);
+    if (res.status === 401 && st.refresh && await refreshTokens()) res = await raw(method, path, opts);
+    const text = await res.text();
+    let data = null; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+    if (title) log(title, res.status, data && data.accessToken ? { ...data, accessToken: '[oculto]', refreshToken: '[oculto]' } : data);
+    return { ok: res.ok, status: res.status, data };
+  } catch (e) {
+    log(title || path, 'ERRO DE REDE', String(e) + ' (API fora do ar, URL errada ou CORS)');
+    return { ok: false, status: 0, data: null };
+  }
+}
+function setSession(d, email) {
+  st.access = d.accessToken; st.refresh = d.refreshToken; st.role = d.role || 'cidadao'; st.email = email;
+  renderWho(); refreshAll();
+}
+function renderWho() {
+  $('who').textContent = st.access ? `${st.email} (${st.role})` : 'Visitante (não logado)';
+  $('box-new').classList.toggle('hidden', st.role !== 'cidadao');
+  $('box-notif').classList.toggle('hidden', st.role !== 'cidadao');
+}
+
+// ---------- sessão ----------
+$('btn-register').onclick = async () => {
+  const email = $('c-email').value;
+  const r = await api('POST /auth/register', 'POST', '/auth/register', { json: { email, password: $('c-pass').value }, auth: false });
+  if (r.ok) setSession({ ...r.data, role: 'cidadao' }, email);
+};
+$('btn-login').onclick = async () => {
+  const email = $('c-email').value;
+  const r = await api('POST /auth/login', 'POST', '/auth/login', { json: { email, password: $('c-pass').value }, auth: false });
+  if (r.ok) setSession(r.data, email);
+};
+$('btn-staff').onclick = async () => {
+  const email = $('s-email').value;
+  const r = await api('POST /auth/staff/login', 'POST', '/auth/staff/login', { json: { email, password: $('s-pass').value, totp: $('s-totp').value }, auth: false });
+  if (r.ok) setSession(r.data, email);
+};
+$('btn-onboard').onclick = () => api('POST /me/onboarding', 'POST', '/me/onboarding', { json: {
+  firstName: 'Maria', lastName: 'da Silva', phone: '11912345678', cpf: $('c-cpf').value,
+  address: { cep: '01001000', street: 'Praça da Sé', number: '10', neighborhood: 'Sé', city: 'São Paulo', state: 'SP' } } });
+$('btn-logout').onclick = async () => {
+  await api('POST /auth/logout', 'POST', '/auth/logout');
+  Object.assign(st, { access: null, refresh: null, role: null, email: null });
+  renderWho(); refreshAll();
+};
+
+// ---------- mapa ----------
+const map = L.map('map').setView([-23.5505, -46.6333], 12);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+const publicLayer = L.layerGroup().addTo(map);
+const mineLayer = L.layerGroup().addTo(map);
+let pin = null;
+
+const colorOf = (s) => STATUS[s]?.[1] || '#000';
+
+function photoImg(o, mine) {
+  const img = document.createElement('img');
+  if (!o.thumbUrl) return null;
+  if (!mine) { img.src = apiBase() + o.thumbUrl; return img; }   // pública: <img> direto
+  raw('GET', o.thumbUrl).then((r) => (r.ok ? r.blob() : null)).then((b) => { if (b) img.src = URL.createObjectURL(b); });
+  return img;                                                     // privada: baixa com o token
+}
+
+function popupFor(o, mine) {
+  const box = document.createElement('div'); box.className = 'popup';
+  const head = document.createElement('b'); head.textContent = `${CATS[o.category] || o.category} · ${STATUS[o.status][0]}`;
+  const desc = document.createElement('div'); desc.textContent = o.description;       // textContent: sem XSS
+  const when = document.createElement('small'); when.textContent = new Date(o.createdAt).toLocaleString();
+  box.append(head, desc);
+  const img = photoImg(o, mine || !['em_analise', 'em_atendimento', 'resolvido'].includes(o.status));
+  if (img) box.append(img);
+  box.append(when);
+  if (isStaff()) {
+    const note = document.createElement('input'); note.placeholder = 'Mensagem ao cidadão (obrigatória ao recusar)';
+    const acts = document.createElement('div'); acts.className = 'acts';
+    for (const next of NEXT[o.status]) {
+      const b = document.createElement('button'); b.textContent = '→ ' + STATUS[next][0];
+      b.onclick = async () => {
+        const json = { status: next }; if (note.value.trim()) json.note = note.value.trim();
+        const r = await api(`PATCH ${o.id.slice(0, 8)} → ${next}`, 'PATCH', `/staff/occurrences/${o.id}`, { json });
+        if (r.ok) { map.closePopup(); refreshAll(); }
+      };
+      acts.append(b);
+    }
+    const audit = document.createElement('button'); audit.textContent = 'Auditoria';
+    audit.onclick = () => api('GET auditoria', 'GET', `/staff/occurrences/${o.id}/audit`);
+    acts.append(audit);
+    box.append(note, acts);
+  }
+  return box;
+}
+
+function draw(layer, items, mine) {
+  layer.clearLayers();
+  for (const o of items) {
+    const m = L.circleMarker([o.lat, o.lng], { radius: mine ? 10 : 8, color: mine ? '#000' : '#fff', weight: mine ? 3 : 1, fillColor: colorOf(o.status), fillOpacity: 0.9 });
+    m.bindPopup(() => popupFor(o, mine), { maxWidth: 260 });
+    layer.addLayer(m);
+  }
+}
+
+async function loadPublic() {
+  const b = map.getBounds();
+  const qs = new URLSearchParams({ bbox: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].join(','), includeResolved: $('f-resolved').checked });
+  if ($('f-cat').value) qs.set('category', $('f-cat').value);
+  const r = await api(null, 'GET', '/occurrences/map?' + qs, { auth: false });
+  if (r.ok) { draw(publicLayer, r.data.items, false); if (r.data.truncated) log('mapa', 'aviso', 'resultado truncado: aproxime o zoom'); }
+}
+async function loadMine() {
+  mineLayer.clearLayers();
+  if (st.role === 'cidadao') {
+    const r = await api(null, 'GET', '/me/occurrences?limit=100'); if (r.ok) draw(mineLayer, r.data.items, true);
+  } else if (isStaff()) {
+    const r = await api(null, 'GET', '/staff/occurrences?limit=100'); if (r.ok) draw(mineLayer, r.data.items, true);
+  }
+}
+async function loadNotifs() {
+  if (st.role !== 'cidadao') return;
+  const r = await api(null, 'GET', '/me/notifications?limit=20');
+  if (!r.ok) return;
+  $('unread').textContent = r.data.unreadCount ? `(${r.data.unreadCount} nova(s))` : '';
+  $('notifs').replaceChildren(...r.data.items.map((n) => {
+    const d = document.createElement('div'); d.className = 'notif' + (n.readAt ? '' : ' unread');
+    d.textContent = `${new Date(n.createdAt).toLocaleString()} — ${n.body}`;
+    if (!n.readAt) d.onclick = async () => { await api(null, 'POST', `/me/notifications/${n.id}/read`); loadNotifs(); };
+    return d;
+  }));
+}
+const refreshAll = () => { loadPublic(); loadMine(); loadNotifs(); };
+
+let t; map.on('moveend', () => { clearTimeout(t); t = setTimeout(loadPublic, 300); });
+$('f-resolved').onchange = loadPublic; $('f-cat').onchange = loadPublic;
+$('btn-readall').onclick = async () => { await api('POST read-all', 'POST', '/me/notifications/read-all'); loadNotifs(); };
+setInterval(loadNotifs, 8000);
+
+// ---------- nova ocorrência ----------
+function setPin(lat, lng) {
+  $('n-lat').value = lat.toFixed(6); $('n-lng').value = lng.toFixed(6);
+  if (!pin) {
+    pin = L.marker([lat, lng], { draggable: true }).addTo(map);
+    pin.on('dragend', () => { const p = pin.getLatLng(); setPin(p.lat, p.lng); });
+  } else pin.setLatLng([lat, lng]);
+}
+map.on('click', (e) => { if (st.role === 'cidadao') setPin(e.latlng.lat, e.latlng.lng); });
+$('btn-geo').onclick = () => navigator.geolocation.getCurrentPosition(
+  (p) => { map.setView([p.coords.latitude, p.coords.longitude], 17); setPin(p.coords.latitude, p.coords.longitude); },
+  (e) => log('geolocalização', 'erro', e.message));
+$('btn-create').onclick = async () => {
+  if (!$('n-lat').value) return log('nova ocorrência', 'faltou', 'clique no mapa para marcar o local');
+  const form = new FormData();
+  form.append('category', $('n-cat').value); form.append('description', $('n-desc').value);
+  form.append('lat', $('n-lat').value); form.append('lng', $('n-lng').value);
+  if ($('n-photo').files[0]) form.append('photo', $('n-photo').files[0]);
+  const r = await api('POST /occurrences', 'POST', '/occurrences', { form });
+  if (r.ok) { $('n-desc').value = ''; $('n-photo').value = ''; if (pin) { map.removeLayer(pin); pin = null; } $('n-lat').value = $('n-lng').value = ''; refreshAll(); }
+};
+
+renderWho(); loadPublic();
+</script>
+</body>
+</html>

@@ -6,6 +6,8 @@ const schema = z.object({
   DATABASE_URL: z.string().url(),
   CORS_ORIGINS: z.string().default("http://localhost:3000"),
   // Atrás de proxy (Caddy/Nginx) para req.ip refletir o cliente real e não o proxy.
+  // Pasta das fotos (volume Docker em produção). Troque storage.ts por S3/R2 quando escalar.
+  UPLOAD_DIR: z.string().default("./data/uploads"),
   TRUST_PROXY: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
   // Segredos: gere com `openssl rand -base64 48` (JWT/pepper) e `openssl rand -base64 32` (chave).
   JWT_SECRET: z.string().min(32),

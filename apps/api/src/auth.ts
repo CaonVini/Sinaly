@@ -13,11 +13,17 @@ declare module "@fastify/jwt" {
     user: { sub: string; fid: string };
   }
 }
+export interface Auth {
+  userId: string;
+  role: Role;
+  familyId: string;
+}
 declare module "fastify" {
   interface FastifyRequest {
-    auth: { userId: string; role: Role; familyId: string };
+    auth: Auth;
   }
   interface FastifyInstance {
+    tryAuth: (req: FastifyRequest) => Promise<Auth | null>;
     authenticate: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
     requireRole: (...roles: Role[]) => (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
   }
@@ -41,11 +47,11 @@ export async function registerAuth(app: FastifyInstance) {
 
   // Valida assinatura/expiração E consulta o banco: conta desativada ou sessão
   // revogada (logout, reuso de refresh) perde acesso imediatamente, sem esperar o token vencer.
-  app.decorate("authenticate", async (req: FastifyRequest, reply: FastifyReply) => {
+  async function resolveAuth(req: FastifyRequest): Promise<Auth | null> {
     try {
       await req.jwtVerify();
     } catch {
-      return reply.code(401).send({ error: "Não autenticado" });
+      return null;
     }
     const { sub, fid } = req.user;
     const [row] = await db
@@ -59,9 +65,17 @@ export async function registerAuth(app: FastifyInstance) {
         ),
       )
       .limit(1);
-    if (!row) return reply.code(401).send({ error: "Não autenticado" });
-    req.auth = { userId: sub, role: row.role, familyId: fid };
+    return row ? { userId: sub, role: row.role, familyId: fid } : null;
+  }
+
+  app.decorate("authenticate", async (req: FastifyRequest, reply: FastifyReply) => {
+    const auth = await resolveAuth(req);
+    if (!auth) return reply.code(401).send({ error: "Não autenticado" });
+    req.auth = auth;
   });
+
+  // Rotas públicas que mostram mais para quem está logado: nunca responde 401, devolve null.
+  app.decorate("tryAuth", async (req: FastifyRequest) => (req.headers.authorization ? resolveAuth(req) : null));
 
   app.decorate("requireRole", (...roles: Role[]) => async (req: FastifyRequest, reply: FastifyReply) => {
     await app.authenticate(req, reply);

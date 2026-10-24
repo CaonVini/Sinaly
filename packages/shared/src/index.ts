@@ -14,9 +14,9 @@ export const ROLES = ["cidadao", "servidor", "gestor"] as const;
 export const roleSchema = z.enum(ROLES);
 export type Role = z.infer<typeof roleSchema>;
 
-// Fluxo: aguardando_aprovacao -> (recusado | em_analise -> em_atendimento -> resolvido)
+// Fluxo: nao_verificado -> (recusado | em_analise -> em_atendimento -> resolvido)
 export const STATUSES = [
-  "aguardando_aprovacao",
+  "nao_verificado",
   "em_analise",
   "em_atendimento",
   "resolvido",
@@ -25,20 +25,109 @@ export const STATUSES = [
 export const statusSchema = z.enum(STATUSES);
 export type Status = z.infer<typeof statusSchema>;
 
-export const PUBLIC_STATUSES: readonly Status[] = [
-  "em_analise",
-  "em_atendimento",
-  "resolvido",
-];
+export const STATUS_LABELS: Record<Status, string> = {
+  nao_verificado: "Não verificado",
+  em_analise: "Em análise",
+  em_atendimento: "Em atendimento",
+  resolvido: "Resolvido",
+  recusado: "Recusado",
+};
 
-export const createOccurrenceSchema = z.object({
+export const CATEGORY_LABELS: Record<Category, string> = {
+  seguranca: "Segurança",
+  infraestrutura: "Infraestrutura",
+  sinalizacao: "Sinalização",
+  saneamento: "Saneamento",
+  iluminacao: "Iluminação",
+};
+
+/** Status que qualquer pessoa pode ver no mapa público. */
+export const PUBLIC_STATUSES: readonly Status[] = ["em_analise", "em_atendimento", "resolvido"];
+
+/** Depois de resolvida, a ocorrência some do mapa após N dias (volta com o filtro "resolvidos"). */
+export const RESOLVED_VISIBLE_DAYS = 5;
+
+/** Transições que a prefeitura pode fazer. Qualquer outra é recusada pela API. */
+export const ALLOWED_TRANSITIONS: Record<Status, readonly Status[]> = {
+  nao_verificado: ["em_analise", "recusado"],
+  em_analise: ["em_atendimento", "resolvido", "recusado"],
+  em_atendimento: ["em_analise", "resolvido"],
+  resolvido: ["em_atendimento"], // reabrir
+  recusado: ["nao_verificado"], // reconsiderar
+};
+
+/** Remove caracteres de controle (exceto quebra de linha) e espaços nas pontas. */
+export const cleanText = (v: string) =>
+  v.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "").trim();
+
+const text = (min: number, max: number) => z.string().transform(cleanText).pipe(z.string().min(min).max(max));
+const numberField = z
+  .string()
+  .trim()
+  .min(1)
+  .transform(Number)
+  .pipe(z.number().finite());
+const latitude = z.number().min(-90).max(90);
+const longitude = z.number().min(-180).max(180);
+
+/** Campos de texto do formulário multipart de nova ocorrência (a foto vem como arquivo). */
+export const createOccurrenceFieldsSchema = z.object({
   category: categorySchema,
-  description: z.string().trim().min(10).max(1000),
-  lat: z.number().min(-90).max(90),
-  lng: z.number().min(-180).max(180),
-  photoKey: z.string().max(255).optional(),
+  description: text(10, 1000),
+  lat: numberField.pipe(latitude),
+  lng: numberField.pipe(longitude),
 });
-export type CreateOccurrenceInput = z.infer<typeof createOccurrenceSchema>;
+export type CreateOccurrenceFields = z.infer<typeof createOccurrenceFieldsSchema>;
+
+/** Edição pela prefeitura. Campos desconhecidos (ex.: authorId) são rejeitados. */
+export const staffUpdateSchema = z
+  .object({
+    category: categorySchema.optional(),
+    description: text(10, 1000).optional(),
+    lat: latitude.optional(),
+    lng: longitude.optional(),
+    status: statusSchema.optional(),
+    note: text(1, 500).optional(),
+  })
+  .strict()
+  .refine((v) => (v.lat === undefined) === (v.lng === undefined), "Informe lat e lng juntos")
+  .refine(
+    (v) => v.category !== undefined || v.description !== undefined || v.lat !== undefined || v.status !== undefined,
+    "Nada para alterar",
+  );
+export type StaffUpdateInput = z.infer<typeof staffUpdateSchema>;
+
+const bbox = z
+  .string()
+  .transform((v) => v.split(",").map(Number))
+  .pipe(z.tuple([longitude, latitude, longitude, latitude]))
+  .refine(([minLng, minLat, maxLng, maxLat]) => minLng < maxLng && minLat < maxLat, "bbox inválido")
+  .transform(([minLng, minLat, maxLng, maxLat]) => ({ minLng, minLat, maxLng, maxLat }));
+const bool = z.enum(["true", "false"]).default("false").transform((v) => v === "true");
+const limit = (max: number, def: number) =>
+  z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(1).max(max)).default(String(def));
+
+/** GET /occurrences/map?bbox=minLng,minLat,maxLng,maxLat&includeResolved=true&category=... */
+export const mapQuerySchema = z.object({
+  bbox,
+  includeResolved: bool,
+  category: categorySchema.optional(),
+  limit: limit(500, 300),
+});
+
+export const listQuerySchema = z.object({
+  limit: limit(100, 30),
+  cursor: z.string().max(200).optional(),
+  status: statusSchema.optional(),
+  category: categorySchema.optional(),
+  bbox: bbox.optional(),
+});
+
+export const notificationsQuerySchema = z.object({
+  limit: limit(100, 30),
+  cursor: z.string().max(200).optional(),
+  unread: bool,
+});
 
 export const digitsOnly = (v: string) => v.replace(/\D/g, "");
 

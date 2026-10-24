@@ -59,15 +59,19 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       CORS_ORIGINS: ${CORS_ORIGINS}
       TRUST_PROXY: ${TRUST_PROXY:-false}
+      UPLOAD_DIR: /data/uploads
       JWT_SECRET: ${JWT_SECRET}
       CPF_HASH_PEPPER: ${CPF_HASH_PEPPER}
       DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY}
     depends_on:
       migrate:
         condition: service_completed_successfully
+    volumes:
+      - uploads:/data/uploads
     ports:
       - "${API_PORT:-3333}:3333"
 
 volumes:
+  uploads:
   pgdata:
   miniodata:

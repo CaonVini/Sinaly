@@ -3,6 +3,7 @@ import {
   boolean,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   text,
@@ -42,14 +43,17 @@ export const occurrences = pgTable(
     location: geometry("location", { type: "point", mode: "xy", srid: 4326 }).notNull(),
     neighborhood: text("neighborhood"),
     photoKey: text("photo_key"),
-    status: statusEnum("status").notNull().default("aguardando_aprovacao"),
+    status: statusEnum("status").notNull().default("nao_verificado"),
     moderationFlag: text("moderation_flag"),
+    // Preenchido ao virar "resolvido" e limpo se for reaberta; a regra dos 5 dias no mapa usa este campo.
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("occurrences_location_gist").using("gist", t.location),
-    index("occurrences_status_idx").on(t.status),
+    index("occurrences_status_idx").on(t.status, t.resolvedAt),
+    index("occurrences_created_idx").on(t.createdAt, t.id),
     index("occurrences_author_idx").on(t.authorId),
   ],
 );
@@ -117,4 +121,37 @@ export const authEvents = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("auth_events_user_idx").on(t.userId, t.createdAt)],
+);
+
+// Trilha de auditoria: SOMENTE inserção (um trigger no banco bloqueia UPDATE e DELETE).
+export const occurrenceAudit = pgTable(
+  "occurrence_audit",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    occurrenceId: uuid("occurrence_id").notNull().references(() => occurrences.id),
+    actorId: uuid("actor_id").notNull().references(() => users.id),
+    actorRole: roleEnum("actor_role").notNull(),
+    action: text("action").notNull(), // create | update | status_change | photo_replace
+    changes: jsonb("changes").notNull().default({}), // { campo: { from, to } }
+    ip: text("ip"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("occurrence_audit_occ_idx").on(t.occurrenceId, t.createdAt), index("occurrence_audit_actor_idx").on(t.actorId, t.createdAt)],
+);
+
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    occurrenceId: uuid("occurrence_id").references(() => occurrences.id),
+    type: text("type").notNull(), // status_changed
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    fromStatus: statusEnum("from_status"),
+    toStatus: statusEnum("to_status"),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("notifications_user_idx").on(t.userId, t.createdAt, t.id)],
 );

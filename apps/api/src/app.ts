@@ -6,7 +6,10 @@ import { registerAuth } from "./auth.js";
 import { pool } from "./db/client.js";
 import { env } from "./env.js";
 import { authRoutes } from "./routes/auth.js";
+import { HttpError } from "./http.js";
 import { meRoutes } from "./routes/me.js";
+import { notificationRoutes } from "./routes/notifications.js";
+import { occurrenceRoutes } from "./routes/occurrences.js";
 
 export async function buildApp({ rateLimit: limit = true }: { rateLimit?: boolean } = {}) {
   const app = Fastify({
@@ -34,6 +37,18 @@ export async function buildApp({ rateLimit: limit = true }: { rateLimit?: boolea
   await registerAuth(app);
   await authRoutes(app, { rateLimit: limit });
   await meRoutes(app);
+  await occurrenceRoutes(app, { rateLimit: limit });
+  await notificationRoutes(app);
+
+  // Nunca devolve detalhe interno: erros do banco (DrizzleQueryError) carregam o SQL e os parâmetros.
+  app.setErrorHandler((err: Error & { statusCode?: number; details?: unknown }, req, reply) => {
+    const status = err instanceof HttpError ? err.statusCode : err.statusCode && err.statusCode < 500 ? err.statusCode : 500;
+    if (status >= 500) {
+      req.log.error({ err }, "erro não tratado");
+      return reply.code(500).send({ error: "Erro interno" });
+    }
+    return reply.code(status).send({ error: err.message, ...(err.details ? { details: err.details } : {}) });
+  });
 
   app.get("/health", async () => {
     await pool.query("SELECT 1");
