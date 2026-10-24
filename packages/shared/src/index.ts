@@ -74,6 +74,8 @@ const longitude = z.number().min(-180).max(180);
 export const createOccurrenceFieldsSchema = z.object({
   category: categorySchema,
   description: text(10, 1000),
+  // Bairro/referência do local (opcional; campo vazio vale como não informado).
+  neighborhood: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), text(2, 80).optional()),
   lat: numberField.pipe(latitude),
   lng: numberField.pipe(longitude),
 });
@@ -108,6 +110,7 @@ export const staffUpdateSchema = z
   .object({
     category: categorySchema.optional(),
     description: text(10, 1000).optional(),
+    neighborhood: text(2, 80).optional(),
     lat: latitude.optional(),
     lng: longitude.optional(),
     status: statusSchema.optional(),
@@ -116,7 +119,7 @@ export const staffUpdateSchema = z
   .strict()
   .refine((v) => (v.lat === undefined) === (v.lng === undefined), "Informe lat e lng juntos")
   .refine(
-    (v) => v.category !== undefined || v.description !== undefined || v.lat !== undefined || v.status !== undefined,
+    (v) => v.category !== undefined || v.description !== undefined || v.neighborhood !== undefined || v.lat !== undefined || v.status !== undefined,
     "Nada para alterar",
   );
 export type StaffUpdateInput = z.infer<typeof staffUpdateSchema>;
@@ -145,6 +148,7 @@ export const listQuerySchema = z.object({
   status: statusSchema.optional(),
   category: categorySchema.optional(),
   bbox: bbox.optional(),
+  order: z.enum(["asc", "desc"]).default("desc"),
   // Período de criação (dias no horário de Brasília), usado pela planilha da prefeitura.
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),

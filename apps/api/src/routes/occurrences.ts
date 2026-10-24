@@ -1,5 +1,5 @@
 import multipart from "@fastify/multipart";
-import { and, count, desc, eq, gt, inArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, inArray, or, sql, type SQL } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
   ALLOWED_TRANSITIONS,
@@ -27,12 +27,13 @@ import { openObject, thumbKey } from "../storage.js";
 
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 const DAILY_CAP = 20; // ocorrências por cidadão em 24 h (anti-spam)
-const FIELD_NAMES = new Set(["category", "description", "lat", "lng", "status", "reporterName", "reporterPhone"]);
+const FIELD_NAMES = new Set(["category", "description", "neighborhood", "lat", "lng", "status", "reporterName", "reporterPhone"]);
 
 const columns = {
   id: occurrences.id,
   category: occurrences.category,
   description: occurrences.description,
+  neighborhood: occurrences.neighborhood,
   status: occurrences.status,
   hasPhoto: sql<boolean>`${occurrences.photoKey} is not null`,
   lat: sql<number>`ST_Y(${occurrences.location})`,
@@ -46,6 +47,7 @@ type Row = {
   id: string;
   category: Category;
   description: string;
+  neighborhood: string | null;
   status: Status;
   hasPhoto: boolean;
   lat: number;
@@ -61,6 +63,7 @@ const dto = (r: Row) => ({
   id: r.id,
   category: r.category,
   description: r.description,
+  neighborhood: r.neighborhood,
   status: r.status,
   lat: r.lat,
   lng: r.lng,
@@ -99,15 +102,20 @@ async function fetchOne(id: string, tx: Pick<typeof db, "select"> = db, lock = f
   return row as (Row & { authorId: string; photoKey: string | null; source: Source; contactEnc: string | null }) | undefined;
 }
 
-async function page(where: SQL | undefined, limit: number, cursor: string | undefined) {
+async function page(where: SQL | undefined, limit: number, cursor: string | undefined, order: "asc" | "desc" = "desc") {
   const c = decodeCursor(cursor);
-  const after = c ? sql`(${occurrences.createdAt}, ${occurrences.id}) < (${c.t}::timestamptz, ${c.id}::uuid)` : undefined;
+  const after = c
+    ? order === "desc"
+      ? sql`(${occurrences.createdAt}, ${occurrences.id}) < (${c.t}::timestamptz, ${c.id}::uuid)`
+      : sql`(${occurrences.createdAt}, ${occurrences.id}) > (${c.t}::timestamptz, ${c.id}::uuid)`
+    : undefined;
+  const dir = order === "desc" ? desc : asc;
   const rows = (await db
     .select({ ...columns, authorId: occurrences.authorId, authorName: users.name, source: occurrences.source, contactEnc: occurrences.reporterContactEnc })
     .from(occurrences)
     .leftJoin(users, eq(users.id, occurrences.authorId))
     .where(and(where, after))
-    .orderBy(desc(occurrences.createdAt), desc(occurrences.id))
+    .orderBy(dir(occurrences.createdAt), dir(occurrences.id))
     .limit(limit + 1)) as (Row & { authorId: string; authorName: string | null; source: Source; contactEnc: string | null })[];
   const items = rows.slice(0, limit);
   const last = items.at(-1);
@@ -172,7 +180,7 @@ const idParam = (req: FastifyRequest) => {
 
 export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: boolean }) {
   const rl = (max: number, window: string) => limitConfig(opts.rateLimit, max, window);
-  await app.register(multipart, { limits: { fileSize: MAX_PHOTO_BYTES, files: 1, fields: 8, fieldSize: 4096, parts: 10 } });
+  await app.register(multipart, { limits: { fileSize: MAX_PHOTO_BYTES, files: 1, fields: 10, fieldSize: 4096, parts: 12 } });
   const staffOnly = app.requireRole("servidor", "gestor");
 
   // ---------- cidadão: registrar ----------
@@ -198,6 +206,7 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
             authorId,
             category: data.category,
             description: data.description,
+            neighborhood: data.neighborhood ?? null,
             location: sql`ST_SetSRID(ST_MakePoint(${data.lng}, ${data.lat}), 4326)` as unknown as { x: number; y: number },
             photoKey,
           })
@@ -209,7 +218,7 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
           actorId: authorId,
           actorRole: "cidadao",
           action: "create",
-          changes: { category: { to: data.category }, description: { to: data.description }, location: { to: { lat: data.lat, lng: data.lng } }, photo: { to: photoKey } },
+          changes: { category: { to: data.category }, description: { to: data.description }, ...(data.neighborhood ? { neighborhood: { to: data.neighborhood } } : {}), location: { to: { lat: data.lat, lng: data.lng } }, photo: { to: photoKey } },
           ip: req.ip,
         });
         return occurrenceId;
@@ -290,17 +299,17 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
   // ---------- prefeitura ----------
   app.get("/staff/occurrences", { preHandler: staffOnly }, async (req) => {
     const q = parse(listQuerySchema, req.query);
-    const { items, nextCursor } = await page(
-      and(
-        q.status ? eq(occurrences.status, q.status) : undefined,
-        q.category ? eq(occurrences.category, q.category) : undefined,
-        q.bbox ? inBbox(q.bbox) : undefined,
-        createdBetween(q.from, q.to),
-      ),
-      q.limit,
-      q.cursor,
+    const where = and(
+      q.status ? eq(occurrences.status, q.status) : undefined,
+      q.category ? eq(occurrences.category, q.category) : undefined,
+      q.bbox ? inBbox(q.bbox) : undefined,
+      createdBetween(q.from, q.to),
     );
-    return { items: items.map((r) => ({ ...dto(r), authorId: r.authorId, authorName: r.authorName, ...staffExtras(r) })), nextCursor };
+    const [{ items, nextCursor }, [totalRow]] = await Promise.all([
+      page(where, q.limit, q.cursor, q.order),
+      db.select({ n: count() }).from(occurrences).where(where),
+    ]);
+    return { items: items.map((r) => ({ ...dto(r), authorId: r.authorId, authorName: r.authorName, ...staffExtras(r) })), nextCursor, total: totalRow?.n ?? 0 };
   });
 
   // Cadastro manual (ex.: ligação por telefone). Foto opcional; entra já visível ao cidadão conforme o status escolhido.
@@ -319,6 +328,7 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
             authorId: actor.userId,
             category: data.category,
             description: data.description,
+            neighborhood: data.neighborhood ?? null,
             location: sql`ST_SetSRID(ST_MakePoint(${data.lng}, ${data.lat}), 4326)` as unknown as { x: number; y: number },
             photoKey,
             status: data.status,
@@ -339,6 +349,7 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
             status: { to: data.status },
             category: { to: data.category },
             description: { to: data.description },
+            ...(data.neighborhood ? { neighborhood: { to: data.neighborhood } } : {}),
             location: { to: { lat: data.lat, lng: data.lng } },
             photo: { to: photoKey },
             ...(contact ? { reporterContact: { to: "informado" } } : {}),
@@ -367,6 +378,7 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
       const changes: Record<string, { from: unknown; to: unknown }> = {};
       if (body.category && body.category !== cur.category) changes.category = { from: cur.category, to: body.category };
       if (body.description && body.description !== cur.description) changes.description = { from: cur.description, to: body.description };
+      if (body.neighborhood && body.neighborhood !== cur.neighborhood) changes.neighborhood = { from: cur.neighborhood, to: body.neighborhood };
       if (body.lat !== undefined && body.lng !== undefined && (Math.abs(body.lat - cur.lat) > 1e-7 || Math.abs(body.lng - cur.lng) > 1e-7)) {
         changes.location = { from: { lat: cur.lat, lng: cur.lng }, to: { lat: body.lat, lng: body.lng } };
       }
@@ -389,6 +401,7 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
           updatedAt: new Date(),
           ...(changes.category ? { category: body.category } : {}),
           ...(changes.description ? { description: body.description } : {}),
+          ...(changes.neighborhood ? { neighborhood: body.neighborhood } : {}),
           ...(changes.location ? { location: sql`ST_SetSRID(ST_MakePoint(${body.lng}, ${body.lat}), 4326)` as unknown as { x: number; y: number } } : {}),
           ...(newStatus ? { status: newStatus, resolvedAt: newStatus === "resolvido" ? sql`now()` : cur.status === "resolvido" ? null : undefined } : {}),
         })

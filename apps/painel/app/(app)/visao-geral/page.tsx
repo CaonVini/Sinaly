@@ -18,7 +18,7 @@ const OccurrenceMap = dynamic(() => import("@/components/occurrence-map").then((
 
 function Kpi({ title, value, hint, icon, href, tone }: { title: string; value: ReactNode; hint: string; icon: ReactNode; href?: string; tone?: "warn" }) {
   const body = (
-    <Card className={cn("h-full", href && "transition-colors hover:border-primary/50", tone === "warn" && "border-[color:var(--st-em_analise)]/60")}>
+    <Card className={cn("h-full", href && "transition-colors hover:border-primary/50", tone === "warn" && "border-[color:var(--st-nao_verificado)]/60")}>
       <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle>{title}</CardTitle>
         <span className="text-muted-foreground [&_svg]:size-4">{icon}</span>
@@ -106,9 +106,9 @@ export default function OverviewPage() {
         {data && data.unverifiedOver24h > 0 && (
           <Link
             href="/ocorrencias?status=nao_verificado"
-            className="flex items-center gap-2 rounded-md border border-[color:var(--st-em_analise)]/60 bg-[color:var(--st-em_analise)]/10 px-3 py-1.5 text-sm font-medium"
+            className="flex items-center gap-2 rounded-md border border-[color:var(--st-nao_verificado)]/60 bg-[color:var(--st-nao_verificado)]/10 px-3 py-1.5 text-sm font-medium"
           >
-            <AlertTriangle className="size-4 text-[color:var(--st-em_analise)]" />
+            <AlertTriangle className="size-4 text-[color:var(--st-nao_verificado)]" />
             {data.unverifiedOver24h} {data.unverifiedOver24h === 1 ? "ocorrência aguarda" : "ocorrências aguardam"} verificação há mais de 24 h
           </Link>
         )}

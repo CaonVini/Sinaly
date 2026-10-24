@@ -106,7 +106,7 @@ function Content() {
 
   const shown = useMemo(() => {
     const t = q.trim().toLowerCase();
-    return t ? items.filter((o) => `${o.description} ${o.authorName ?? ""} ${o.contact?.name ?? ""} ${o.id.slice(0, 8)}`.toLowerCase().includes(t)) : items;
+    return t ? items.filter((o) => `${o.description} ${o.neighborhood ?? ""} ${o.authorName ?? ""} ${o.contact?.name ?? ""} ${o.id.slice(0, 8)}`.toLowerCase().includes(t)) : items;
   }, [items, q]);
   const first = items[0];
 
@@ -160,7 +160,7 @@ function Content() {
         <table className="w-full min-w-[56rem] border-collapse text-sm">
           <thead className="sticky top-0 z-10 bg-muted text-left text-xs text-muted-foreground">
             <tr>
-              {["Protocolo", "Registrada em", "Categoria", "Status", "Descrição", "Origem", "Registrada por", ""].map((h) => (
+              {["Protocolo", "Registrada em", "Categoria", "Bairro", "Status", "Descrição", "Origem", "Registrada por", ""].map((h) => (
                 <th key={h} className="border-b px-4 py-2.5 font-medium whitespace-nowrap">{h}</th>
               ))}
             </tr>
@@ -173,6 +173,7 @@ function Content() {
                 </td>
                 <td className="px-4 py-2.5 whitespace-nowrap tabular-nums">{fmtDateTime(o.createdAt)}</td>
                 <td className="px-4 py-2.5 whitespace-nowrap">{CATEGORY_LABELS[o.category]}</td>
+                <td className="px-4 py-2.5 whitespace-nowrap">{o.neighborhood ?? "—"}</td>
                 <td className="px-4 py-2.5"><StatusBadge status={o.status} /></td>
                 <td className="max-w-md px-4 py-2.5"><span className="line-clamp-2">{o.description}</span></td>
                 <td className="px-4 py-2.5 whitespace-nowrap">

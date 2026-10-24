@@ -6,6 +6,7 @@ export type Occurrence = {
   id: string;
   category: Category;
   description: string;
+  neighborhood: string | null;
   status: Status;
   lat: number;
   lng: number;

@@ -2,6 +2,8 @@
 import type { Map as LMap, Marker } from "leaflet";
 import { useEffect, useRef } from "react";
 import type { Occurrence } from "@/lib/client";
+import { STATUSES, STATUS_LABELS } from "@sinaly/shared";
+import { statusColor } from "@/components/status-badge";
 import { PIN_ANCHOR, PIN_SIZE, pinHtml } from "@/lib/pin";
 
 const BR_CENTER: [number, number] = [-14.2, -51.9];
@@ -66,5 +68,17 @@ export function OccurrenceMap({ items, selectedId, onSelect, fitKey }: { items: 
     if (o && state.current) state.current.map.panTo([o.lat, o.lng], { animate: true });
   }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return <div ref={el} className="size-full" role="application" aria-label="Mapa das ocorrências" />;
+  return (
+    <div className="relative size-full">
+      <div ref={el} className="size-full" role="application" aria-label="Mapa das ocorrências" />
+      <ul className="absolute inset-x-3 bottom-7 z-[900] mx-auto flex w-fit flex-wrap justify-center gap-x-4 gap-y-1 rounded-2xl bg-card/95 px-4 py-2 text-xs font-medium shadow-md ring-1 ring-black/5 backdrop-blur" aria-label="Legenda do mapa">
+        {STATUSES.map((s) => (
+          <li key={s} className="flex items-center gap-1.5 whitespace-nowrap">
+            <span className="size-2.5 rounded-full" style={{ background: statusColor(s) }} />
+            {STATUS_LABELS[s]}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }

@@ -258,6 +258,33 @@ describe("visibilidade", () => {
     expect(withPhoto.json().photoUrl).toContain("/photo");
   });
 
+  it("bairro: opcional na criação, editável pela prefeitura, e a lista ordena e conta", async () => {
+    const a = await citizen("a@example.com", "529.982.247-25");
+    const st = await staff();
+    const o1 = await create(a.token, { neighborhood: "Jardim das Flores" });
+    const o2 = await create(a.token, { neighborhood: "" });
+    expect(o1.neighborhood).toBe("Jardim das Flores");
+    expect(o2.neighborhood).toBeNull();
+    expect((await patch(st, o2.id, { neighborhood: "Centro" })).json().neighborhood).toBe("Centro");
+    const audit = (await send("GET", `/staff/occurrences/${o2.id}/audit`, st)).json().items;
+    expect(audit.at(-1).changes.neighborhood).toEqual({ from: null, to: "Centro" });
+
+    const desc = (await send("GET", "/staff/occurrences", st)).json();
+    expect(desc.items.map((i: { id: string }) => i.id)).toEqual([o2.id, o1.id]);
+    expect(desc.total).toBe(2);
+    const asc = (await send("GET", "/staff/occurrences?order=asc&limit=1", st)).json();
+    expect(asc.items[0].id).toBe(o1.id);
+    expect(asc.total).toBe(2);
+    const next = (await send("GET", `/staff/occurrences?order=asc&limit=1&cursor=${asc.nextCursor}`, st)).json();
+    expect(next.items[0].id).toBe(o2.id);
+    expect(next.nextCursor).toBeNull();
+    expect((await send("GET", "/staff/occurrences?order=sideways", st)).statusCode).toBe(400);
+    // público também vê o bairro (não é dado pessoal), e o campo é validado
+    await patch(st, o1.id, { status: "em_analise" });
+    expect((await send("GET", `/occurrences/${o1.id}`)).json().neighborhood).toBe("Jardim das Flores");
+    expect((await multipartPost("/occurrences", a.token, fields({ neighborhood: "x" }))).statusCode).toBe(400);
+  });
+
   it("lista da prefeitura filtra por período de criação", async () => {
     const a = await citizen("a@example.com", "529.982.247-25");
     const st = await staff();

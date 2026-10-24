@@ -46,7 +46,7 @@ function Form({ onCreated, center }: { onCreated: (o: Occurrence) => void; cente
     body.set("description", String(f.get("description") ?? "").trim());
     body.set("lat", String(point.lat));
     body.set("lng", String(point.lng));
-    for (const k of ["reporterName", "reporterPhone"]) {
+    for (const k of ["neighborhood", "reporterName", "reporterPhone"]) {
       const v = String(f.get(k) ?? "").trim();
       if (v) body.set(k, v);
     }
@@ -92,6 +92,11 @@ function Form({ onCreated, center }: { onCreated: (o: Occurrence) => void; cente
         <div className="space-y-2">
           <Label htmlFor="description">Descrição</Label>
           <Textarea id="description" name="description" required minLength={10} maxLength={1000} placeholder="O que foi relatado e onde exatamente." />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="neighborhood">Bairro <span className="font-normal text-muted-foreground">(opcional)</span></Label>
+          <Input id="neighborhood" name="neighborhood" maxLength={80} placeholder="Ex.: Jardim das Flores" autoComplete="off" />
         </div>
 
         <div className="space-y-2">

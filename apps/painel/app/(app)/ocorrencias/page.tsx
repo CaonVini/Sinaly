@@ -1,24 +1,25 @@
 "use client";
 import { CATEGORIES, CATEGORY_LABELS, STATUSES, STATUS_LABELS, type Category, type Status } from "@sinaly/shared";
-import { Loader2, MapPinned, Plus } from "lucide-react";
+import { ChevronRight, Clock, ImageOff, Loader2, MapPin, MapPinned, Plus } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { NewOccurrenceSheet } from "@/components/new-occurrence-sheet";
+import { CategoryIcon } from "@/components/category-icon";
 import { OccurrenceSheet } from "@/components/occurrence-sheet";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, type Occurrence, type Stats, useApi } from "@/lib/client";
-import { cn, timeAgo } from "@/lib/utils";
+import { cn, timeAgo, titleOf } from "@/lib/utils";
 
 const OccurrenceMap = dynamic(() => import("@/components/occurrence-map").then((m) => m.OccurrenceMap), {
   ssr: false,
   loading: () => <Skeleton className="size-full rounded-none" />,
 });
 
-type Page = { items: Occurrence[]; nextCursor: string | null };
+type Page = { items: Occurrence[]; nextCursor: string | null; total: number };
 const ALL = "all";
 
 function Content() {
@@ -26,10 +27,12 @@ function Content() {
   const sp = useSearchParams();
   const status = (STATUSES as readonly string[]).includes(sp.get("status") ?? "") ? (sp.get("status") as Status) : null;
   const category = (CATEGORIES as readonly string[]).includes(sp.get("category") ?? "") ? (sp.get("category") as Category) : null;
+  const order = sp.get("order") === "asc" ? "asc" : "desc";
   const selected = sp.get("id");
 
   const [items, setItems] = useState<Occurrence[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
+  const [matching, setMatching] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
@@ -37,7 +40,7 @@ function Content() {
   const stats = useApi<Stats>("staff/stats");
   const reloadStats = stats.reload;
 
-  const qs = new URLSearchParams({ limit: "50", ...(status ? { status } : {}), ...(category ? { category } : {}) }).toString();
+  const qs = new URLSearchParams({ limit: "50", order, ...(status ? { status } : {}), ...(category ? { category } : {}) }).toString();
 
   useEffect(() => {
     const ctl = new AbortController();
@@ -46,6 +49,7 @@ function Content() {
       .then((p) => {
         setItems(p.items);
         setCursor(p.nextCursor);
+        setMatching(p.total);
         setError(null);
       })
       .catch((e) => e?.name !== "AbortError" && setError(e.message))
@@ -117,45 +121,78 @@ function Content() {
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(22rem,30rem)_1fr]">
-        <section className="min-h-0 overflow-y-auto border-r bg-card" aria-label="Lista de ocorrências">
-          {error && <p role="alert" className="p-4 text-sm text-destructive">{error}</p>}
-          <ul className="divide-y">
-            {items.map((o) => (
-              <li key={o.id}>
-                <button
-                  onClick={() => setParam("id", o.id)}
-                  className={cn("flex w-full gap-3 p-4 text-left transition-colors hover:bg-accent/50", selected === o.id && "bg-accent/70")}
-                >
-                  <span className="size-16 shrink-0 overflow-hidden rounded-md border bg-muted">
-                    {o.thumbUrl && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={`/api/proxy/${o.thumbUrl.replace(/^\//, "")}`} alt="" loading="lazy" className="size-full object-cover" />
+      <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(24rem,32rem)_1fr]">
+        <section className="flex min-h-0 flex-col border-r bg-muted/30" aria-label="Lista de ocorrências">
+          <div className="flex items-center justify-between gap-3 border-b bg-card px-4 py-3">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <span className="whitespace-nowrap">Ordenar por</span>
+              <div className="w-40">
+                <Select value={order} onValueChange={(v) => setParam("order", v === "asc" ? "asc" : null)}>
+                  <SelectTrigger aria-label="Ordenar por" className="h-8"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="desc">Mais recentes</SelectItem>
+                    <SelectItem value="asc">Mais antigas</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <span className="text-sm text-muted-foreground tabular-nums" aria-live="polite">
+              {matching === null ? "" : `${matching} ${matching === 1 ? "ocorrência" : "ocorrências"}`}
+            </span>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {error && <p role="alert" className="p-4 text-sm text-destructive">{error}</p>}
+            <ul className="space-y-2.5 p-3">
+              {items.map((o) => (
+                <li key={o.id}>
+                  <button
+                    onClick={() => setParam("id", o.id)}
+                    aria-current={selected === o.id}
+                    className={cn(
+                      "flex w-full gap-3.5 rounded-xl border bg-card p-3 text-left shadow-xs transition-colors hover:border-primary/40",
+                      selected === o.id && "border-primary bg-accent/50 ring-1 ring-primary",
                     )}
-                  </span>
-                  <span className="min-w-0 flex-1 space-y-1">
-                    <span className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium">{CATEGORY_LABELS[o.category]}</span>
-                      <span className="text-xs text-muted-foreground">{timeAgo(o.createdAt)}</span>
+                  >
+                    <span className="flex size-[5.5rem] shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted text-muted-foreground">
+                      {o.thumbUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={`/api/proxy/${o.thumbUrl.replace(/^\//, "")}`} alt="" loading="lazy" className="size-full object-cover" />
+                      ) : (
+                        <ImageOff className="size-5" aria-label="Sem foto" />
+                      )}
                     </span>
-                    <span className="line-clamp-2 block text-sm text-muted-foreground">{o.description}</span>
-                    <StatusBadge status={o.status} />
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-          {loading && items.length === 0 && <div className="space-y-3 p-4">{Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-20" />)}</div>}
-          {!loading && !error && items.length === 0 && (
-            <div className="flex flex-col items-center gap-2 p-10 text-center text-sm text-muted-foreground">
-              <MapPinned className="size-6" /> Nenhuma ocorrência neste filtro.
-            </div>
-          )}
-          {cursor && (
-            <div className="p-4">
-              <Button variant="outline" className="w-full" onClick={more} disabled={loading}>{loading && <Loader2 className="animate-spin" />} Carregar mais</Button>
-            </div>
-          )}
+                    <span className="flex min-w-0 flex-1 flex-col gap-1">
+                      <span className="flex items-start justify-between gap-2">
+                        <span className="line-clamp-2 text-[0.95rem] leading-snug font-semibold">{titleOf(o.description)}</span>
+                        <ChevronRight className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                      </span>
+                      <span className="flex items-center gap-1.5 text-sm text-muted-foreground"><CategoryIcon category={o.category} className="size-3.5 shrink-0" /> {CATEGORY_LABELS[o.category]}</span>
+                      <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                        <MapPin className="size-3.5 shrink-0" />
+                        <span className="truncate">{o.neighborhood ?? "Bairro não informado"}</span>
+                      </span>
+                      <span className="mt-auto flex items-end justify-between gap-2 pt-0.5">
+                        <span className="flex items-center gap-1.5 text-sm text-muted-foreground"><Clock className="size-3.5" /> {timeAgo(o.createdAt)}</span>
+                        <StatusBadge status={o.status} />
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {loading && items.length === 0 && <div className="space-y-2.5 p-3">{Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}</div>}
+            {!loading && !error && items.length === 0 && (
+              <div className="flex flex-col items-center gap-2 p-10 text-center text-sm text-muted-foreground">
+                <MapPinned className="size-6" /> Nenhuma ocorrência neste filtro.
+              </div>
+            )}
+            {cursor && (
+              <div className="px-3 pb-4">
+                <Button variant="outline" className="w-full" onClick={more} disabled={loading}>{loading && <Loader2 className="animate-spin" />} Carregar mais</Button>
+              </div>
+            )}
+          </div>
         </section>
 
         <section className="hidden min-h-0 lg:block" aria-label="Mapa">

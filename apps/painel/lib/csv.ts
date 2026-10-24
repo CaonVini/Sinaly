@@ -24,6 +24,7 @@ const COLUMNS: [string, (o: Occurrence) => unknown][] = [
   ["Atualizada em", (o) => fmt(o.updatedAt)],
   ["Resolvida em", (o) => fmt(o.resolvedAt)],
   ["Categoria", (o) => CATEGORY_LABELS[o.category]],
+  ["Bairro", (o) => o.neighborhood ?? ""],
   ["Status", (o) => STATUS_LABELS[o.status]],
   ["Descrição", (o) => o.description],
   ["Latitude", (o) => String(o.lat).replace(".", ",")],

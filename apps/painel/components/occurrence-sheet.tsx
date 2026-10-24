@@ -5,7 +5,7 @@ import { useState } from "react";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/input";
+import { Input, Textarea } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
@@ -24,7 +24,7 @@ const ACTION: Record<string, { label: string; variant: "default" | "outline" | "
   "recusado>nao_verificado": { label: "Desfazer recusa", variant: "outline" },
 };
 
-const FIELD: Record<string, string> = { status: "Status", category: "Categoria", description: "Descrição", location: "Localização", note: "Observação", photo: "Foto", source: "Origem", reporterContact: "Contato de quem relatou" };
+const FIELD: Record<string, string> = { neighborhood: "Bairro", status: "Status", category: "Categoria", description: "Descrição", location: "Localização", note: "Observação", photo: "Foto", source: "Origem", reporterContact: "Contato de quem relatou" };
 
 function show(field: string, v: unknown): string {
   if (v === null || v === undefined) return "—";
@@ -56,6 +56,7 @@ function Detail({ id, onChanged }: { id: string; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [photoOk, setPhotoOk] = useState(true);
+  const [hood, setHood] = useState<string | null>(null);
   const o = occ.data;
 
   async function save(body: Record<string, unknown>) {
@@ -155,6 +156,14 @@ function Detail({ id, onChanged }: { id: string; onChanged: () => void }) {
             <a className="flex h-9 items-center gap-1.5 text-sm text-primary hover:underline" target="_blank" rel="noopener noreferrer" href={`https://www.openstreetmap.org/?mlat=${o.lat}&mlon=${o.lng}#map=18/${o.lat}/${o.lng}`}>
               <span className="font-mono text-xs">{o.lat.toFixed(5)}, {o.lng.toFixed(5)}</span> <ExternalLink className="size-3.5" />
             </a>
+          </div>
+        </section>
+
+        <section className="space-y-2">
+          <Label htmlFor="hood">Bairro</Label>
+          <div className="flex gap-2">
+            <Input id="hood" value={hood ?? o.neighborhood ?? ""} onChange={(e) => setHood(e.target.value)} maxLength={80} placeholder="Não informado" />
+            <Button variant="outline" disabled={busy || hood === null || hood.trim().length < 2 || hood.trim() === o.neighborhood} onClick={() => save({ neighborhood: hood!.trim() }).then(() => setHood(null))}>Salvar</Button>
           </div>
         </section>
 
