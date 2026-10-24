@@ -121,8 +121,8 @@ function Content() {
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 lg:grid-cols-[22rem_1fr] 2xl:grid-cols-[24rem_1fr]">
-        <section className="flex min-h-0 flex-col border-r bg-muted/30" aria-label="Lista de ocorrências">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] lg:grid-cols-[22rem_minmax(0,1fr)] 2xl:grid-cols-[24rem_1fr]">
+        <section className="flex min-h-0 min-w-0 flex-col border-r bg-muted/30" aria-label="Lista de ocorrências">
           <div className="flex items-center justify-between gap-2 border-b bg-card px-3 py-3">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <span className="whitespace-nowrap">Ordenar por</span>
