@@ -365,6 +365,28 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
     }
   });
 
+  // Números para o painel: contagem por status/categoria, tempo médio até resolver e criadas por dia.
+  app.get("/staff/stats", { preHandler: staffOnly }, async () => {
+    const [byStatus, byCategory, resolution, perDay] = await Promise.all([
+      db.select({ key: occurrences.status, total: count() }).from(occurrences).groupBy(occurrences.status),
+      db.select({ key: occurrences.category, total: count() }).from(occurrences).groupBy(occurrences.category),
+      db.execute(sql`select avg(extract(epoch from (resolved_at - created_at)) / 3600)::float8 as hours
+        from occurrences where status = 'resolvido' and resolved_at is not null`),
+      db.execute(sql`select to_char(d::date, 'YYYY-MM-DD') as day, coalesce(c.total, 0)::int as total
+        from generate_series(current_date - 13, current_date, interval '1 day') d
+        left join (select created_at::date as day, count(*) as total from occurrences
+                   where created_at >= current_date - 13 group by 1) c on c.day = d::date
+        order by d`),
+    ]);
+    const hours = (resolution.rows[0] as { hours: number | null } | undefined)?.hours ?? null;
+    return {
+      byStatus: Object.fromEntries(byStatus.map((r) => [r.key, r.total])),
+      byCategory: Object.fromEntries(byCategory.map((r) => [r.key, r.total])),
+      avgResolutionHours: hours === null ? null : Math.round(hours * 10) / 10,
+      perDay: perDay.rows as { day: string; total: number }[],
+    };
+  });
+
   app.get("/staff/occurrences/:id/audit", { preHandler: staffOnly }, async (req) => {
     const id = idParam(req);
     const rows = await db

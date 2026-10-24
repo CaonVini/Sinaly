@@ -1,10 +1,5 @@
-import { STATUSES } from "@sinaly/shared";
+import { redirect } from "next/navigation";
 
 export default function Home() {
-  return (
-    <main style={{ padding: 32 }}>
-      <h1>Sinaly · Painel da prefeitura</h1>
-      <p>Base pronta. Status do fluxo: {STATUSES.join(" → ")}</p>
-    </main>
-  );
+  redirect("/visao-geral");
 }

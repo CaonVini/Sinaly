@@ -94,3 +94,14 @@ pnpm db:migrate && pnpm test
 - **Fotos:** gravadas em disco (`UPLOAD_DIR`, volume Docker `uploads`), reprocessadas com `sharp` (valida o conteúdo, remove EXIF/GPS, 1600 px + miniatura de 400 px). Nunca servidas como arquivo estático: sempre pela rota, que checa a visibilidade. Para trocar por S3/R2, reescreva só `apps/api/src/storage.ts`.
 - **Página de teste com mapa:** `tools/teste-ocorrencias.html` (Leaflet + OpenStreetMap).
 - **Faça backup do volume `uploads`** junto com o banco.
+
+## Painel da prefeitura (apps/painel)
+
+Next.js 15 + Tailwind v4 + componentes no padrão shadcn/ui (azul cobalto, fonte Geist). Telas: login (senha + TOTP), visão geral com números, fila de ocorrências com mapa, detalhe com mudança de status e histórico de auditoria.
+
+- `docker compose up -d --build` sobe o painel em http://localhost:3000 (variável `PAINEL_PORT`).
+- Sem Docker: `pnpm dev:painel` (com `API_URL=http://localhost:3333`).
+- **Tokens nunca chegam ao JavaScript do navegador.** O painel guarda o JWT e o refresh em cookies `httpOnly` + `SameSite=Strict` e fala com a API por um proxy próprio (`/api/proxy/*`) que só aceita rotas de uma lista branca. Mutações exigem `Origin` igual ao do painel.
+- Em produção, sirva por HTTPS e defina `COOKIE_SECURE=true` e `PAINEL_URL=https://...`.
+- Criar o primeiro funcionário: `docker compose exec api node --import tsx dist/scripts/create-staff.js --email ... --name "..." --role gestor` (ou `pnpm staff:create` fora do Docker).
+- Rota nova na API: `GET /staff/stats` (contagens por status/categoria, tempo médio de resolução, criadas por dia).

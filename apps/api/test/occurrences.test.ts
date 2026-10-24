@@ -207,6 +207,24 @@ describe("visibilidade", () => {
     expect((await send("GET", "/staff/occurrences", a.token)).statusCode).toBe(403);
   });
 
+  it("estatísticas do painel: só funcionário, com contagens corretas", async () => {
+    const a = await citizen("a@example.com", "529.982.247-25");
+    const st = await staff();
+    const o1 = await create(a.token);
+    await create(a.token, { category: "saneamento" });
+    await patch(st, o1.id, { status: "em_analise" });
+    expect((await send("GET", "/staff/stats", a.token)).statusCode).toBe(403);
+    expect((await send("GET", "/staff/stats")).statusCode).toBe(401);
+    const res = await send("GET", "/staff/stats", st);
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.byStatus).toEqual({ nao_verificado: 1, em_analise: 1 });
+    expect(body.byCategory).toEqual({ iluminacao: 1, saneamento: 1 });
+    expect(body.avgResolutionHours).toBeNull();
+    expect(body.perDay).toHaveLength(14);
+    expect(body.perDay.at(-1).total).toBe(2);
+  });
+
   it("depois que a prefeitura aprova, todos veem no mapa, no detalhe e na foto", async () => {
     const a = await citizen("a@example.com", "529.982.247-25");
     const b = await citizen("b@example.com", "390.533.447-05");
