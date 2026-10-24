@@ -1,0 +1,16 @@
+{
+  "name": "sinaly",
+  "private": true,
+  "packageManager": "pnpm@10.28.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev:api": "pnpm --filter @sinaly/api dev",
+    "dev:painel": "pnpm --filter @sinaly/painel dev",
+    "dev:app": "pnpm --filter @sinaly/app start",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "db:generate": "pnpm --filter @sinaly/api db:generate",
+    "db:migrate": "pnpm --filter @sinaly/api db:migrate",
+    "db:seed": "pnpm --filter @sinaly/api db:seed"
+  }
+}

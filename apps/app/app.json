@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "Sinaly",
+    "slug": "sinaly",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "android": { "package": "br.unc.sinaly" },
+    "ios": { "bundleIdentifier": "br.unc.sinaly" },
+    "web": { "bundler": "metro" }
+  }
+}
