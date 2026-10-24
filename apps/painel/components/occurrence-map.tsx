@@ -23,7 +23,7 @@ export function OccurrenceMap({ items, selectedId, onSelect, fitKey }: { items: 
       const L = await import("leaflet");
       if (dead || !el.current) return;
       const map = L.map(el.current, { zoomControl: true, worldCopyJump: false }).setView(BR_CENTER, 4);
-      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a>', referrerPolicy: "origin" }).addTo(map);
       state.current = { L, map, markers: new Map() };
       sync();
     })();
