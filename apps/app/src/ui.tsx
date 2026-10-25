@@ -1,6 +1,6 @@
 import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import type { ComponentProps, ReactNode } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View, type TextInputProps, type ViewStyle } from "react-native";
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, type TextInputProps, type ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { CategoryMeta, IconKey } from "@sinaly/shared";
 import { useData } from "./app-state";
@@ -108,17 +108,80 @@ export function Card({ children, style }: { children: ReactNode; style?: ViewSty
   return <View style={[styles.card, style]}>{children}</View>;
 }
 
-export function Chip({ label, active, onPress, color }: { label: string; active: boolean; onPress: () => void; color?: string }) {
+export type FilterOption = { value: string | undefined; label: string; color?: string };
+
+/** Botão compacto que mostra o filtro atual; o resto das opções fica na folha de baixo (sem fileira cortada na tela). */
+export function FilterButton({ label, active, onPress, loading, floating }: { label: string; active: boolean; onPress: () => void; loading?: boolean; floating?: boolean }) {
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityState={{ selected: active }}
-      style={[styles.chip, active && { backgroundColor: colors.primary, borderColor: colors.primary }]}
+      accessibilityLabel={`Filtro: ${label}`}
+      style={({ pressed }) => [styles.filterBtn, floating && styles.floating, active && { borderColor: colors.primary }, pressed && { opacity: 0.85 }]}
     >
-      {color ? <View style={[styles.dot, { backgroundColor: active ? "#fff" : color }]} /> : null}
-      <Text style={[styles.chipText, active && { color: "#fff" }]}>{label}</Text>
+      <Icon name="filter-variant" size={18} color={active ? colors.primary : colors.muted} />
+      <Text style={[styles.filterText, active && { color: colors.primary }]} numberOfLines={1}>
+        {label}
+      </Text>
+      {loading ? <ActivityIndicator size="small" color={colors.primary} /> : <Icon name="chevron-down" size={18} color={colors.muted} />}
     </Pressable>
+  );
+}
+
+/** Folha inferior com uma lista de opções (uma escolhida) e, opcionalmente, uma chave liga/desliga. */
+export function FilterSheet({
+  visible,
+  title,
+  options,
+  value,
+  onSelect,
+  onClose,
+  toggle,
+}: {
+  visible: boolean;
+  title: string;
+  options: FilterOption[];
+  value: string | undefined;
+  onSelect: (v: string | undefined) => void;
+  onClose: () => void;
+  toggle?: { label: string; hint?: string; value: boolean; onChange: (v: boolean) => void };
+}) {
+  const insets = useSafeAreaInsets();
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
+      <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Fechar filtros" />
+      <View style={[styles.sheet, { paddingBottom: insets.bottom + space(4) }]}>
+        <View style={styles.grabber} />
+        <Text style={styles.sheetTitle}>{title}</Text>
+        <ScrollView style={{ maxHeight: 380 }}>
+          {options.map((o) => {
+            const sel = o.value === value;
+            return (
+              <Pressable
+                key={o.value ?? "__all"}
+                onPress={() => (onSelect(o.value), onClose())}
+                style={({ pressed }) => [styles.option, pressed && { backgroundColor: colors.bg }]}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: sel }}
+              >
+                {o.color ? <View style={[styles.dot, { backgroundColor: o.color, width: 10, height: 10, borderRadius: 5 }]} /> : <Icon name="format-list-bulleted" size={16} color={colors.muted} />}
+                <Text style={[styles.optionText, sel && { color: colors.primary, fontWeight: "700" }]}>{o.label}</Text>
+                {sel ? <Icon name="check" size={20} color={colors.primary} /> : null}
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+        {toggle ? (
+          <View style={styles.toggleRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.optionText}>{toggle.label}</Text>
+              {toggle.hint ? <Text style={{ color: colors.muted, fontSize: 13, marginTop: 2 }}>{toggle.hint}</Text> : null}
+            </View>
+            <Switch value={toggle.value} onValueChange={toggle.onChange} trackColor={{ true: colors.primary, false: colors.border }} thumbColor="#fff" />
+          </View>
+        ) : null}
+      </View>
+    </Modal>
   );
 }
 
@@ -182,8 +245,16 @@ export const styles = StyleSheet.create({
   error: { color: colors.danger, fontSize: 13, marginTop: 4 },
   hint: { color: colors.muted, fontSize: 13, marginTop: 4 },
   card: { backgroundColor: colors.card, borderRadius: radius.lg, padding: space(4), borderWidth: 1, borderColor: colors.border },
-  chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
-  chipText: { fontSize: 14, fontWeight: "600", color: colors.text },
+  filterBtn: { flexDirection: "row", alignItems: "center", gap: 8, alignSelf: "flex-start", maxWidth: "100%", height: 42, paddingHorizontal: 14, borderRadius: radius.pill, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
+  floating: { borderColor: "transparent", shadowColor: "#0b1533", shadowOpacity: 0.14, shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 4 },
+  filterText: { fontSize: 15, fontWeight: "600", color: colors.text, flexShrink: 1 },
+  backdrop: { flex: 1, backgroundColor: "rgba(11,21,51,0.35)" },
+  sheet: { backgroundColor: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: space(4), paddingTop: space(2) },
+  grabber: { alignSelf: "center", width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, marginBottom: space(3) },
+  sheetTitle: { fontSize: 18, fontWeight: "800", color: colors.text, marginBottom: space(2) },
+  option: { flexDirection: "row", alignItems: "center", gap: space(3), paddingVertical: space(3.5), paddingHorizontal: space(1), borderRadius: radius.md },
+  optionText: { flex: 1, fontSize: 16, color: colors.text },
+  toggleRow: { flexDirection: "row", alignItems: "center", gap: space(3), borderTopWidth: 1, borderTopColor: colors.border, marginTop: space(2), paddingTop: space(4), paddingHorizontal: space(1) },
   header: { flexDirection: "row", alignItems: "center", paddingHorizontal: space(4), paddingBottom: space(3), backgroundColor: colors.bg },
   headerTitle: { flex: 1, fontSize: 22, fontWeight: "800", color: colors.text },
   empty: { alignItems: "center", padding: space(10), gap: space(2) },

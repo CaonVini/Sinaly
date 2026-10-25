@@ -1,20 +1,20 @@
 import * as Location from "expo-location";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api, ApiError, type Bbox, type Occurrence } from "../api";
 import { useData, useNav } from "../app-state";
 import { DEFAULT_CENTER } from "../config";
-import { LeafletMap, type LeafletMapHandle, type MapMarker } from "../map/LeafletMap";
+import { NativeMap, type MapMarker, type NativeMapHandle } from "../map/NativeMap";
 import { colors, radius, space } from "../theme";
-import { CategoryIcon, Chip, Icon, StatusBadge, formatDate } from "../ui";
+import { CategoryIcon, FilterButton, FilterSheet, Icon, StatusBadge, formatDate } from "../ui";
 
 export function MapScreen() {
   const insets = useSafeAreaInsets();
   const { push } = useNav();
   const { meta, category, status, version } = useData();
-  const map = useRef<LeafletMapHandle>(null);
-  const [ready, setReady] = useState(false);
+  const map = useRef<NativeMapHandle>(null);
+  const [filterOpen, setFilterOpen] = useState(false);
   const [bbox, setBbox] = useState<Bbox | null>(null);
   const center = useRef<{ lat: number; lng: number }>(DEFAULT_CENTER);
   const [cat, setCat] = useState<string | undefined>();
@@ -64,34 +64,36 @@ export function MapScreen() {
     return byId;
   }, [publicItems, mine, cat]);
 
-  useEffect(() => {
-    if (!ready) return;
-    const markers: MapMarker[] = [...all.values()].map((o) => ({ id: o.id, lat: o.lat, lng: o.lng, color: status(o.status)?.color ?? colors.muted, mine: o.mine }));
-    map.current?.setMarkers(markers);
-  }, [all, ready, status]);
+  const markers = useMemo<MapMarker[]>(
+    () => [...all.values()].map((o) => ({ id: o.id, lat: o.lat, lng: o.lng, color: status(o.status)?.color ?? colors.muted, mine: o.mine })),
+    [all, status],
+  );
 
   const locate = useCallback(async (fly: boolean) => {
     const perm = await Location.requestForegroundPermissionsAsync();
     if (!perm.granted) return;
+    // Última posição conhecida é instantânea; a leitura nova do GPS refina logo depois.
     const last = await Location.getLastKnownPositionAsync();
     if (last && fly) map.current?.flyTo(last.coords.latitude, last.coords.longitude, 16);
     const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-    map.current?.setUserLocation(pos.coords.latitude, pos.coords.longitude);
-    if (fly) map.current?.flyTo(pos.coords.latitude, pos.coords.longitude, 16);
+    if (fly && (!last || Math.abs(last.coords.latitude - pos.coords.latitude) + Math.abs(last.coords.longitude - pos.coords.longitude) > 0.002)) {
+      map.current?.flyTo(pos.coords.latitude, pos.coords.longitude, 16);
+    }
   }, []);
 
   useEffect(() => {
-    if (ready) void locate(true).catch(() => undefined);
-  }, [ready, locate]);
+    void locate(true).catch(() => undefined);
+  }, [locate]);
 
   const sel = selected ? all.get(selected) : undefined;
+  const filterLabel = (cat ? category(cat)?.name ?? "Categoria" : "Todas as categorias") + (showResolved ? " · com resolvidas" : "");
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <LeafletMap
+      <NativeMap
         ref={map}
         center={DEFAULT_CENTER}
-        onReady={() => setReady(true)}
+        markers={markers}
         onRegion={(b, c) => {
           center.current = c;
           setBbox(b);
@@ -100,20 +102,27 @@ export function MapScreen() {
         onMapPress={() => setSelected(null)}
       />
 
-      {/* Filtros */}
+      {/* Filtro: um botão compacto; as opções abrem numa folha (nada cortado na borda da tela). */}
       <View style={[s.top, { paddingTop: insets.top + space(2) }]} pointerEvents="box-none">
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: space(2), paddingHorizontal: space(3) }}>
-          <Chip label="Todas" active={!cat} onPress={() => setCat(undefined)} />
-          {meta?.categories
-            .filter((c) => c.active)
-            .map((c) => <Chip key={c.slug} label={c.name} color={c.color} active={cat === c.slug} onPress={() => setCat(cat === c.slug ? undefined : c.slug)} />)}
-        </ScrollView>
-        <View style={{ flexDirection: "row", gap: space(2), paddingHorizontal: space(3), marginTop: space(2), alignItems: "center" }}>
-          <Chip label={showResolved ? "Resolvidas: todas" : `Resolvidas: últimos ${meta?.resolvedVisibleDays ?? 5} dias`} active={showResolved} onPress={() => setShowResolved((v) => !v)} />
-          {loading ? <ActivityIndicator color={colors.primary} /> : null}
+        <View style={{ flexDirection: "row", gap: space(2), alignItems: "center" }} pointerEvents="box-none">
+          <FilterButton floating label={filterLabel} active={!!cat || showResolved} loading={loading} onPress={() => setFilterOpen(true)} />
         </View>
         {error ? <Text style={s.banner}>{error}</Text> : truncated ? <Text style={s.banner}>Muitas ocorrências nesta área. Aproxime o mapa para ver todas.</Text> : null}
       </View>
+      <FilterSheet
+        visible={filterOpen}
+        title="Filtrar o mapa"
+        value={cat}
+        onSelect={setCat}
+        onClose={() => setFilterOpen(false)}
+        options={[{ value: undefined, label: "Todas as categorias" }, ...(meta?.categories.filter((c) => c.active).map((c) => ({ value: c.slug, label: c.name, color: c.color })) ?? [])]}
+        toggle={{
+          label: "Mostrar resolvidas antigas",
+          hint: `Por padrão, resolvidas aparecem só nos últimos ${meta?.resolvedVisibleDays ?? 5} dias.`,
+          value: showResolved,
+          onChange: setShowResolved,
+        }}
+      />
 
       {/* Botões flutuantes */}
       <View style={[s.fabs, { bottom: (sel ? 190 : 0) + space(4) }]} pointerEvents="box-none">
@@ -153,8 +162,8 @@ export function MapScreen() {
 
 const shadow = { shadowColor: "#0b1533", shadowOpacity: 0.15, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 5 };
 const s = StyleSheet.create({
-  top: { position: "absolute", left: 0, right: 0, top: 0 },
-  banner: { marginHorizontal: space(3), marginTop: space(2), backgroundColor: "#fff", padding: space(2.5), borderRadius: radius.md, color: colors.text, fontSize: 13, ...shadow },
+  top: { position: "absolute", left: 0, right: 0, top: 0, paddingHorizontal: space(3) },
+  banner: { marginTop: space(2), backgroundColor: "#fff", padding: space(2.5), borderRadius: radius.md, color: colors.text, fontSize: 13, ...shadow },
   fabs: { position: "absolute", right: space(4), alignItems: "flex-end", gap: space(3) },
   round: { width: 50, height: 50, borderRadius: 25, backgroundColor: "#fff", alignItems: "center", justifyContent: "center", ...shadow },
   fab: { flexDirection: "row", gap: 8, alignItems: "center", backgroundColor: colors.primary, paddingHorizontal: space(5), height: 54, borderRadius: radius.pill, ...shadow },

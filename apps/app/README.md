@@ -39,13 +39,15 @@ npm i -g eas-cli && eas login
 cd apps/app && eas build -p android --profile preview
 ```
 
-O APK precisa de uma API em **HTTPS** (o Android bloqueia HTTP em app instalado): defina `EXPO_PUBLIC_API_URL` com o domínio do servidor ou um túnel HTTPS (ex.: `cloudflared tunnel --url http://localhost:3333`).
+O APK precisa de uma **chave do Google Maps** para Android (Google Cloud → Maps SDK for Android; a cota gratuita cobre a demo). Configure em `app.json` → `android.config.googleMaps.apiKey` via variável de ambiente do EAS, nunca commitada. No Expo Go não precisa.
+
+E de uma API em **HTTPS** (o Android bloqueia HTTP em app instalado): defina `EXPO_PUBLIC_API_URL` com o domínio do servidor ou um túnel HTTPS (ex.: `cloudflared tunnel --url http://localhost:3333`).
 
 ## Decisões técnicas
 
 | Ponto | Escolha | Por quê |
 | --- | --- | --- |
-| Mapa | Leaflet + OpenStreetMap numa WebView | Igual ao painel e sem chave paga do Google Maps no APK |
+| Mapa | Nativo (`react-native-maps`: Google Maps no Android, Apple Maps no iOS) | Rolagem e zoom a 60 fps, sem baixar biblioteca de CDN a cada abertura |
 | Navegação | Navegador próprio (abas + pilha) | Poucas telas; evita duas dependências nativas |
 | Sessão | Access token só em memória; refresh token no SecureStore (Keychain/Keystore) | Token longo nunca fica em texto puro no aparelho |
 | Fotos | Reduzidas para 1600 px e JPEG 70% no aparelho | Upload rápido no 4G, sem EXIF (GPS, modelo do celular) |

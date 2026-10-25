@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, FlatList, Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, FlatList, Image, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
 import { api, ApiError, photoSource, type Occurrence } from "../api";
 import { useData, useNav } from "../app-state";
 import { colors, radius, space } from "../theme";
-import { Button, CategoryIcon, Chip, Empty, ErrorBox, Header, StatusBadge, formatDate } from "../ui";
+import { Button, CategoryIcon, Empty, ErrorBox, FilterButton, FilterSheet, Header, StatusBadge, formatDate } from "../ui";
 
 /** Lista paginada por cursor (a API usa keyset): carrega 30 por vez ao rolar. */
 export function usePaged<T extends { id: string }>(fetchPage: (cursor?: string) => Promise<{ items: T[]; nextCursor: string | null }>, deps: unknown[]) {
@@ -66,18 +66,25 @@ export function usePaged<T extends { id: string }>(fetchPage: (cursor?: string) 
 export function MyOccurrencesScreen() {
   const { push, setTab } = useNav();
   const { meta, category, version } = useData();
+  const { status: statusMeta } = useData();
   const [status, setStatus] = useState<string | undefined>();
+  const [filterOpen, setFilterOpen] = useState(false);
   const list = usePaged((c) => api.myOccurrences(c, status), [status, version]);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <Header title="Meus relatos" />
-      <View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: space(2), paddingHorizontal: space(4), paddingBottom: space(3) }}>
-          <Chip label="Todos" active={!status} onPress={() => setStatus(undefined)} />
-          {meta?.statuses.map((s) => <Chip key={s.slug} label={s.name} color={s.color} active={status === s.slug} onPress={() => setStatus(status === s.slug ? undefined : s.slug)} />)}
-        </ScrollView>
+      <View style={{ paddingHorizontal: space(4), paddingBottom: space(3) }}>
+        <FilterButton label={status ? statusMeta(status)?.name ?? status : "Todos os status"} active={!!status} onPress={() => setFilterOpen(true)} />
       </View>
+      <FilterSheet
+        visible={filterOpen}
+        title="Filtrar por status"
+        value={status}
+        onSelect={setStatus}
+        onClose={() => setFilterOpen(false)}
+        options={[{ value: undefined, label: "Todos os status" }, ...(meta?.statuses.filter((s) => s.active).map((s) => ({ value: s.slug, label: s.name, color: s.color })) ?? [])]}
+      />
       {list.error ? <View style={{ paddingHorizontal: space(4) }}><ErrorBox message={list.error} onRetry={() => void list.reload()} /></View> : null}
       {list.loading && list.items.length === 0 ? (
         <ActivityIndicator style={{ marginTop: space(10) }} color={colors.primary} />

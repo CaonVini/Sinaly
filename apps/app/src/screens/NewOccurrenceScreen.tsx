@@ -9,7 +9,7 @@ import { createOccurrenceFieldsSchema } from "@sinaly/shared";
 import { api, ApiError } from "../api";
 import { useData, useNav } from "../app-state";
 import { DEFAULT_CENTER } from "../config";
-import { LeafletMap, type LeafletMapHandle } from "../map/LeafletMap";
+import { NativeMap, type NativeMapHandle } from "../map/NativeMap";
 import { colors, radius, space } from "../theme";
 import { Button, CategoryIcon, ErrorBox, Field, Header, Icon } from "../ui";
 
@@ -189,21 +189,23 @@ export function NewOccurrenceScreen({ at }: { at?: Point }) {
 /** Tela cheia: o pino fica fixo no centro e o cidadão arrasta o mapa até o ponto certo. */
 function LocationPicker({ initial, around, onCancel, onConfirm }: { initial: Point | null; around?: Point; onCancel: () => void; onConfirm: (p: Point) => void }) {
   const insets = useSafeAreaInsets();
-  const map = useRef<LeafletMapHandle>(null);
+  const map = useRef<NativeMapHandle>(null);
   const [center, setCenter] = useState<Point | null>(initial);
+  useEffect(() => {
+    if (!initial) void gps().catch(() => undefined);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const start = initial ? { ...initial, zoom: 18 } : around && around.lat !== DEFAULT_CENTER.lat ? { ...around, zoom: 16 } : DEFAULT_CENTER;
 
   async function gps() {
     const perm = await Location.requestForegroundPermissionsAsync();
     if (!perm.granted) return;
     const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-    map.current?.setUserLocation(pos.coords.latitude, pos.coords.longitude);
     map.current?.flyTo(pos.coords.latitude, pos.coords.longitude, 18);
   }
 
   return (
     <View style={{ flex: 1 }}>
-      <LeafletMap ref={map} center={start} onRegion={(_b, c) => setCenter(c)} onReady={() => (initial ? undefined : void gps().catch(() => undefined))} />
+      <NativeMap ref={map} center={start} onRegion={(_b, c) => setCenter(c)} />
       <View pointerEvents="none" style={s.pinWrap}>
         <Icon name="map-marker" size={48} color={colors.primary} style={{ marginBottom: 48 }} />
       </View>
