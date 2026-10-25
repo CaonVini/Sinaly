@@ -25,7 +25,7 @@ const ACTION: Record<string, { label: string; variant: "default" | "outline" | "
   "recusado>nao_verificado": { label: "Desfazer recusa", variant: "outline" },
 };
 
-const FIELD: Record<string, string> = { neighborhood: "Bairro", status: "Status", category: "Categoria", description: "Descrição", location: "Localização", note: "Observação", photo: "Foto", source: "Origem", reporterContact: "Contato de quem relatou" };
+const FIELD: Record<string, string> = { neighborhood: "Bairro", status: "Status", category: "Categoria", description: "Descrição", location: "Localização", note: "Comentário", photo: "Foto", source: "Origem", reporterContact: "Contato de quem relatou" };
 
 type Names = { statusName: (s: string) => string; categoryName: (c: string) => string };
 function show(field: string, v: unknown, n: Names): string {
@@ -173,8 +173,8 @@ function Detail({ id, onChanged }: { id: string; onChanged: () => void }) {
         </section>
 
         <section className="space-y-3 rounded-lg border bg-muted/40 p-4">
-          <Label htmlFor="note">Observação {needsReason && <span className="font-normal text-muted-foreground">(obrigatória para recusar)</span>}</Label>
-          <Textarea id="note" value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} placeholder="Opcional. O morador recebe esta observação junto com a mudança de status." className="min-h-16 bg-card" />
+          <Label htmlFor="note">Comentário {needsReason && <span className="font-normal text-muted-foreground">(obrigatório para recusar)</span>}</Label>
+          <Textarea id="note" value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} placeholder="Opcional. O morador vê este comentário na notificação de mudança de status." className="min-h-16 bg-card" />
           <div className="flex flex-wrap gap-2">
             {next.map((t) => {
               const to = t.slug;

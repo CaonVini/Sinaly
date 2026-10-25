@@ -35,6 +35,7 @@ const REFRESH_TTL_MS: Record<Role, number> = {
   cidadao: 30 * 24 * 3600_000,
   servidor: 8 * 3600_000, // funcionário: sessão de um turno
   gestor: 8 * 3600_000,
+  admin: 4 * 3600_000, // conta mais poderosa: sessão mais curta
 };
 
 export async function registerAuth(app: FastifyInstance) {
@@ -54,7 +55,10 @@ export async function registerAuth(app: FastifyInstance) {
     } catch {
       return null;
     }
-    const { sub, fid } = req.user;
+    // Defesa em profundidade: a biblioteca só confere o emissor se ele vier no token; aqui exigimos emissor e validade.
+    const claims = req.user as { sub: string; fid: string; iss?: string; exp?: number };
+    if (claims.iss !== "sinaly-api" || typeof claims.exp !== "number" || typeof claims.fid !== "string") return null;
+    const { sub, fid } = claims;
     const [row] = await db
       .select({ role: users.role })
       .from(users)

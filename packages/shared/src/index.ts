@@ -5,8 +5,17 @@ export const slugSchema = z.string().regex(/^[a-z0-9_]{2,40}$/, "Identificador i
 export const categorySchema = slugSchema;
 export type Category = string;
 
-export const ROLES = ["cidadao", "servidor", "gestor"] as const;
+/**
+ * Cargos. Permissões (a API confere cada uma; o painel só esconde o que não vale):
+ *  cidadao  - app: registra e acompanha as próprias ocorrências
+ *  servidor - painel: triagem e atendimento de ocorrências, planilha e relatórios
+ *  gestor   - tudo do servidor + Configuração (categorias, status, bairro automático)
+ *  admin    - tudo do gestor + Equipe (criar/desativar contas, trocar cargo, redefinir acesso) e trilha de acessos (LGPD)
+ */
+export const ROLES = ["cidadao", "servidor", "gestor", "admin"] as const;
 export const roleSchema = z.enum(ROLES);
+export const STAFF_ROLES = ["servidor", "gestor", "admin"] as const;
+export const ROLE_LABELS: Record<(typeof ROLES)[number], string> = { cidadao: "Cidadão", servidor: "Servidor", gestor: "Gestor", admin: "Administrador" };
 export type Role = z.infer<typeof roleSchema>;
 
 export const statusSchema = slugSchema;
@@ -284,3 +293,29 @@ export const reportQuerySchema = z.object({
   category: categorySchema.optional(),
   status: statusSchema.optional(),
 });
+
+// ---------- Equipe (só admin) ----------
+// Toda operação sensível exige o código TOTP do próprio admin (confirmação de identidade a cada ação).
+const totpCode = z.string().regex(/^\d{6}$/, "Código de 6 dígitos");
+export const staffCreateSchema = z
+  .object({
+    email: z.string().trim().toLowerCase().email().max(255),
+    name: text(2, 120),
+    role: z.enum(STAFF_ROLES),
+    totp: totpCode,
+  })
+  .strict();
+export const staffPatchSchema = z
+  .object({ role: z.enum(STAFF_ROLES).optional(), active: z.boolean().optional(), totp: totpCode })
+  .strict()
+  .refine((v) => v.role !== undefined || v.active !== undefined, "Nada para alterar");
+export const staffResetSchema = z.object({ totp: totpCode }).strict();
+export const accessAuditQuerySchema = z.object({
+  limit: limit(100, 50),
+  cursor: z.string().max(200).optional(),
+  action: z.string().regex(/^[a-z_.]{3,40}$/).optional(),
+  actor: z.string().uuid().optional(),
+});
+export const exportAuditSchema = z
+  .object({ count: z.number().int().min(0).max(1_000_000), filters: z.record(z.string().max(60), z.string().max(60)).default({}) })
+  .strict();

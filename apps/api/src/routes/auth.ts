@@ -53,7 +53,7 @@ export async function authRoutes(app: FastifyInstance, opts: { rateLimit: boolea
   });
 
   async function login(req: FastifyRequest, reply: FastifyReply, kind: Kind, email: string, password: string, totp?: string) {
-    const allowed: Role[] = kind === "citizen" ? ["cidadao"] : ["servidor", "gestor"];
+    const allowed: Role[] = kind === "citizen" ? ["cidadao"] : ["servidor", "gestor", "admin"];
     const limits = LIMITS[kind];
     const [u] = await db.select().from(users).where(eq(users.email, email)).limit(1);
 

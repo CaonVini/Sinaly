@@ -5,6 +5,7 @@ import {
   RESOLVED_VISIBLE_DAYS,
   canTransition,
   createOccurrenceFieldsSchema,
+  exportAuditSchema,
   listQuerySchema,
   mapQuerySchema,
   activityQuerySchema,
@@ -22,6 +23,7 @@ import { citizenProfiles, notifications, occurrenceAudit, occurrences, statusHis
 import type { GeocodeQueue } from "../geocode.js";
 import { decodeCursor, encodeCursor, HttpError, limitConfig, parse, UUID_RE } from "../http.js";
 import { getMeta } from "../meta.js";
+import { auditAccess } from "../access-audit.js";
 import { decrypt, encrypt } from "../security/crypto.js";
 import { openObject, thumbKey } from "../storage.js";
 
@@ -189,7 +191,7 @@ const idParam = (req: FastifyRequest) => {
 export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: boolean; geocode: GeocodeQueue }) {
   const rl = (max: number, window: string) => limitConfig(opts.rateLimit, max, window);
   await app.register(multipart, { limits: { fileSize: MAX_PHOTO_BYTES, files: 1, fields: 10, fieldSize: 4096, parts: 12 } });
-  const staffOnly = app.requireRole("servidor", "gestor");
+  const staffOnly = app.requireRole("servidor", "gestor", "admin");
 
   // ---------- cidadão: registrar ----------
   app.post("/occurrences", { preHandler: app.requireRole("cidadao"), ...rl(20, "1 hour") }, async (req, reply) => {
@@ -261,7 +263,11 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
     const [row, { st }] = await Promise.all([fetchOne(id), getMeta()]);
     if (!row || !canSee(st, auth, row)) throw new HttpError(404, "Ocorrência não encontrada"); // 404, não 403: não revela que existe
     const body: Record<string, unknown> = dto(row);
-    if (isStaff(auth)) Object.assign(body, staffExtras(row));
+    if (isStaff(auth)) {
+      // LGPD: o detalhe de staff traz contato de quem ligou e nome do autor. Registra antes de entregar.
+      await auditAccess(req, { action: "occurrence.view", subjectType: "occurrence", subjectId: id, details: { source: row.source, withContact: !!row.contactEnc } }, db, auth!);
+      Object.assign(body, staffExtras(row));
+    }
     if (isStaff(auth) || auth?.userId === row.authorId) {
       const history = await db
         .select({ from: statusHistory.fromStatus, to: statusHistory.toStatus, note: statusHistory.note, at: statusHistory.createdAt })
@@ -286,6 +292,7 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
     } catch {
       throw new HttpError(404, "Foto não encontrada");
     }
+    if (isStaff(auth) && !thumb) await auditAccess(req, { action: "occurrence.photo", subjectType: "occurrence", subjectId: id }, db, auth!);
     const open = isPublic(st, row.status);
     return reply
       .header("Content-Type", "image/jpeg")
@@ -320,6 +327,11 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
       page(where, q.limit, q.cursor, q.order),
       db.select({ n: count() }).from(occurrences).where(where),
     ]);
+    await auditAccess(req, {
+      action: "occurrence.list",
+      subjectType: "occurrence",
+      details: { count: items.length, withContact: items.filter((r) => r.contactEnc).length, ids: items.map((r) => r.id), filters: { status: q.status, category: q.category, from: q.from, to: q.to, bbox: !!q.bbox, hasCursor: !!q.cursor } },
+    });
     return { items: items.map((r) => ({ ...dto(r), authorId: r.authorId, authorName: r.authorName, ...staffExtras(r) })), nextCursor, total: totalRow?.n ?? 0 };
   });
 
@@ -487,6 +499,14 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
     }
   });
 
+  // Exportação (CSV) montada no painel: o painel avisa antes de baixar e a API registra quem exportou quantas linhas.
+  // Cada página lida já fica registrada em occurrence.list (com os ids), então o conjunto exato é recuperável.
+  app.post("/staff/audit/export", { preHandler: staffOnly, ...rl(10, "1 minute") }, async (req, reply) => {
+    const body = parse(exportAuditSchema, req.body);
+    await auditAccess(req, { action: "occurrence.export", subjectType: "occurrence", details: { format: "csv", count: body.count, filters: body.filters } });
+    return reply.code(204).send();
+  });
+
   // Números para o painel: contagem por status/categoria, tempo médio até resolver e criadas por dia.
   app.get("/staff/stats", { preHandler: staffOnly }, async () => {
     const [byStatus, byCategory, resolution, perDay, stale] = await Promise.all([
@@ -531,6 +551,7 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
       .innerJoin(occurrences, eq(occurrences.id, occurrenceAudit.occurrenceId))
       .orderBy(desc(occurrenceAudit.id))
       .limit(limit);
+    await auditAccess(req, { action: "activity.view", details: { count: rows.length } });
     // Descrição resumida e sem o contato: a visão geral não precisa de mais que isso.
     return { items: rows.map((r) => ({ ...r, description: r.description.slice(0, 120) })) };
   });
@@ -552,6 +573,7 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
       .innerJoin(users, eq(users.id, occurrenceAudit.actorId))
       .where(eq(occurrenceAudit.occurrenceId, id))
       .orderBy(occurrenceAudit.id);
+    await auditAccess(req, { action: "occurrence.audit_view", subjectType: "occurrence", subjectId: id, details: { entries: rows.length } }); // traz nome e IP de funcionários
     return { items: rows };
   });
 }

@@ -11,7 +11,7 @@ type Row = Record<string, unknown>;
 const num = (v: unknown) => (v === null || v === undefined ? null : Math.round(Number(v) * 10) / 10);
 
 export async function reportRoutes(app: FastifyInstance) {
-  const staffOnly = app.requireRole("servidor", "gestor");
+  const staffOnly = app.requireRole("servidor", "gestor", "admin");
 
   // Relatórios agregados (somente números; sem dados pessoais). Filtros: período, categoria e status.
   app.get("/staff/reports", { preHandler: staffOnly }, async (req) => {

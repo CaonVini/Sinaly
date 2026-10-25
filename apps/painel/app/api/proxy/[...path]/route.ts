@@ -20,6 +20,13 @@ const ROUTES: { method: string; re: RegExp }[] = [
   { method: "PUT", re: /^staff\/config\/geocoder$/ },
   { method: "POST", re: /^staff\/geocode\/backfill$/ },
   { method: "GET", re: /^staff\/geocode\/status$/ },
+  // Equipe e trilha de acessos (LGPD): só admin na API; a troca de credenciais exige o TOTP do admin.
+  { method: "GET", re: /^admin\/staff$/ },
+  { method: "POST", re: /^admin\/staff$/ },
+  { method: "PATCH", re: new RegExp(`^admin/staff/${UUID}$`) },
+  { method: "POST", re: new RegExp(`^admin/staff/${UUID}/reset$`) },
+  { method: "GET", re: /^admin\/access-audit$/ },
+  { method: "POST", re: /^staff\/audit\/export$/ },
   { method: "GET", re: /^staff\/stats$/ },
   { method: "GET", re: /^staff\/activity$/ },
   { method: "GET", re: /^staff\/occurrences$/ },
@@ -41,7 +48,7 @@ async function handle(req: Request, ctx: { params: Promise<{ path: string[] }> }
   const search = new URL(req.url).search;
   let body: BodyInit | undefined;
   let fwdHeaders: Record<string, string> | undefined;
-  const isConfig = joined.startsWith("staff/config/") || joined === "staff/geocode/backfill";
+  const isConfig = joined.startsWith("staff/config/") || joined.startsWith("admin/") || joined === "staff/geocode/backfill" || joined === "staff/audit/export";
   if (req.method === "PATCH" || req.method === "PUT" || (req.method === "POST" && isConfig)) {
     body = await req.text();
     if (body.length > 20_000) return deny(413, "Corpo grande demais");

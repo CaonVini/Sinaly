@@ -443,7 +443,7 @@ export default function ConfiguracaoPage() {
   const { meta, reload } = useMeta();
   const [tab, setTab] = useState<Tab>("categories");
 
-  if (me && me.role !== "gestor") {
+  if (me && me.role !== "gestor" && me.role !== "admin") {
     return (
       <div className="p-6">
         <h1 className="text-2xl font-semibold tracking-tight">Configuração</h1>

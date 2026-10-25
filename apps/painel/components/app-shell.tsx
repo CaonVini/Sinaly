@@ -1,5 +1,5 @@
 "use client";
-import { BarChart3, LayoutDashboard, ListChecks, LogOut, Settings, Table2, type LucideIcon } from "lucide-react";
+import { BarChart3, LayoutDashboard, ListChecks, LogOut, Settings, ShieldCheck, Table2, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
@@ -27,8 +27,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     { href: "/ocorrencias", label: "Ocorrências", icon: ListChecks, badge: pending },
     { href: "/planilha", label: "Planilha", icon: Table2 },
     { href: "/relatorios", label: "Relatórios", icon: BarChart3 },
-    // Só o gestor altera a configuração (a API também exige).
-    ...(me?.role === "gestor" ? [{ href: "/configuracao", label: "Configuração", icon: Settings }] : []),
+    // Configuração: gestor e admin. Equipe: só admin. A API também exige; sem o papel, o item nem aparece.
+    ...(me?.role === "gestor" || me?.role === "admin" ? [{ href: "/configuracao", label: "Configuração", icon: Settings }] : []),
+    ...(me?.role === "admin" ? [{ href: "/equipe", label: "Equipe", icon: ShieldCheck }] : []),
   ];
 
   async function logout() {
@@ -82,7 +83,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </span>
             <div className="min-w-0">
               <p className="truncate text-sm leading-tight font-semibold">{me?.name ?? "Servidor"}</p>
-              <p className="text-xs text-muted-foreground">{me?.role === "gestor" ? "Gestor" : "Servidor"}</p>
+              <p className="text-xs text-muted-foreground">{me?.role === "admin" ? "Administrador" : me?.role === "gestor" ? "Gestor" : "Servidor"}</p>
             </div>
           </div>
           {me?.email && <p className="truncate text-xs text-muted-foreground" title={me.email}>{me.email}</p>}

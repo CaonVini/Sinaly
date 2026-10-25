@@ -43,6 +43,13 @@
       "when": 1792890059087,
       "tag": "0005_app_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792890951138,
+      "tag": "0006_staff_roles_access_audit",
+      "breakpoints": true
     }
   ]
 }

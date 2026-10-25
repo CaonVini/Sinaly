@@ -5,3 +5,7 @@ onlyBuiltDependencies:
   - esbuild
   - sharp
   - argon2
+# Correções de segurança em dependências transitivas (pnpm audit): fast-jwt (JWT) e postcss (build do painel).
+overrides:
+  fast-jwt: ">=6.3.4"
+  postcss: ">=8.5.23"

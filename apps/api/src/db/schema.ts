@@ -200,6 +200,28 @@ export const appSettings = pgTable("app_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Trilha de acesso a dados pessoais (LGPD): quem viu/exportou/gerenciou o quê e quando. SOMENTE inserção.
+export const accessAudit = pgTable(
+  "access_audit",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    actorId: uuid("actor_id").notNull().references(() => users.id),
+    actorRole: text("actor_role").notNull(),
+    action: text("action").notNull(), // occurrence.view | occurrence.list | occurrence.photo | occurrence.export | staff.create ...
+    subjectType: text("subject_type"),
+    subjectId: text("subject_id"),
+    details: jsonb("details").notNull().default({}),
+    ip: text("ip"),
+    userAgent: text("user_agent"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("access_audit_created_idx").on(t.createdAt),
+    index("access_audit_actor_idx").on(t.actorId, t.createdAt),
+    index("access_audit_subject_idx").on(t.subjectType, t.subjectId),
+  ],
+);
+
 // Auditoria da configuração (categorias e status): SOMENTE inserção, como a das ocorrências.
 export const configAudit = pgTable(
   "config_audit",

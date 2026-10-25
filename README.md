@@ -112,6 +112,13 @@ Next.js 15 + Tailwind v4 + componentes no padrão shadcn/ui (azul cobalto, fonte
 - **Nova ocorrência** (botão nas telas Ocorrências e Planilha): para registrar ligações e atendimentos de balcão. Local escolhido clicando no mapa, foto **opcional**, status inicial à escolha (padrão "Em análise"), e contato de quem relatou (nome e telefone, **cifrados** no banco e visíveis só para funcionários). Rota: `POST /staff/occurrences` (multipart). A origem fica registrada como "Prefeitura" e a criação entra na auditoria.
 - A exportação contém dados pessoais (contato de quem ligou): trate o arquivo conforme a LGPD.
 
+### Equipe, cargos e trilha LGPD
+
+- Cargos: `cidadao`, `servidor`, `gestor`, `admin`. Só o **admin** vê a aba "Equipe" no painel (e a API responde 403 para os demais): cria contas, troca cargo, ativa/desativa e redefine credenciais. Cada ação pede o TOTP do próprio admin (uso único).
+- Primeiro admin (ou troca de cargo pelo servidor): `pnpm --filter @sinaly/api staff:set-role --email x@y --role admin` (encerra as sessões da conta).
+- Acesso a dados pessoais é registrado de forma imutável em `access_audit` (aba "Acessos (LGPD)").
+- Relatório do pentest automatizado: `apps/api/test/security.test.ts` (rode `pnpm --filter @sinaly/api test`).
+
 ### Configuração e relatórios (painel)
 
 - **/configuracao** (só gestor): categorias (nome, cor, ícone, ativa, ordem) e status (nome, cor, ativo, ordem). Tudo é lido do banco (`GET /meta`, público e com cache curto): pinos, legenda, filtros, planilha e relatórios usam esses valores. Cada alteração grava em `config_audit` (somente inserção, o banco recusa UPDATE/DELETE).

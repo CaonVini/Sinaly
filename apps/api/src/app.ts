@@ -12,6 +12,7 @@ import { notificationRoutes } from "./routes/notifications.js";
 import { occurrenceRoutes } from "./routes/occurrences.js";
 import { configRoutes } from "./routes/config.js";
 import { reportRoutes } from "./routes/reports.js";
+import { adminRoutes } from "./routes/admin.js";
 import { createGeocodeQueue, nominatim, type ReverseGeocoder } from "./geocode.js";
 
 /** `geocoder`: injetável nos testes. Por padrão usa o Nominatim se GEOCODER_ENABLED=true. */
@@ -39,6 +40,16 @@ export async function buildApp({ rateLimit: limit = true, geocoder }: { rateLimi
   });
   if (limit) await app.register(rateLimit, { max: 100, timeWindow: "1 minute" });
   await registerAuth(app);
+
+  // Qualquer resposta a requisição autenticada (dados pessoais, listas, trilhas) nunca é guardada por cache/proxy.
+  // Rotas que definem a própria política (foto pública, mapa) mantêm a sua só quando NÃO há credencial.
+  app.addHook("onSend", async (req, reply, payload) => {
+    if (req.headers.authorization) {
+      reply.header("Cache-Control", "private, no-store");
+      reply.header("Vary", "Authorization");
+    }
+    return payload;
+  });
   await authRoutes(app, { rateLimit: limit });
   await meRoutes(app);
   const geocode = createGeocodeQueue(geocoder !== undefined ? geocoder : env.GEOCODER_ENABLED ? nominatim : null, app.log);
@@ -47,6 +58,7 @@ export async function buildApp({ rateLimit: limit = true, geocoder }: { rateLimi
   await occurrenceRoutes(app, { rateLimit: limit, geocode });
   await configRoutes(app, { rateLimit: limit, geocode });
   await reportRoutes(app);
+  await adminRoutes(app, { rateLimit: limit });
   await notificationRoutes(app);
 
   // Nunca devolve detalhe interno: erros do banco (DrizzleQueryError) carregam o SQL e os parâmetros.

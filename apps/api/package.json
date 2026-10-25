@@ -11,6 +11,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "staff:create": "tsx src/scripts/create-staff.ts",
+    "staff:set-role": "tsx src/scripts/set-role.ts",
     "test": "vitest run"
   },
   "dependencies": {
@@ -21,10 +22,10 @@
     "@fastify/rate-limit": "^10.0.0",
     "@sinaly/shared": "workspace:*",
     "argon2": "^0.43.1",
-    "drizzle-orm": "^0.44.0",
+    "drizzle-orm": "^0.45.2",
     "fastify": "^5.2.0",
     "pg": "^8.13.0",
-    "sharp": "^0.34.5",
+    "sharp": "^0.35.5",
     "zod": "^3.25.0"
   },
   "devDependencies": {

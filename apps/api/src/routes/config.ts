@@ -48,7 +48,7 @@ async function freeSlug(tx: Tx, entity: Entity, base: string): Promise<string> {
 }
 
 export async function configRoutes(app: FastifyInstance, opts: { rateLimit: boolean; geocode: GeocodeQueue }) {
-  const gestorOnly = app.requireRole("gestor");
+  const gestorOnly = app.requireRole("gestor", "admin");
   const rl = (max: number) => limitConfig(opts.rateLimit, max, "1 minute");
   const slugParam = (req: FastifyRequest) => (req.params as { slug: string }).slug;
 

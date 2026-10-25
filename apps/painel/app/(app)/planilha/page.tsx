@@ -89,6 +89,8 @@ function Content() {
         cur = p.nextCursor;
         setExporting(all.length);
       } while (cur && all.length < EXPORT_CAP);
+      // LGPD: o registro do acesso vem antes do arquivo; se falhar, nada é baixado.
+      await api("staff/audit/export", { method: "POST", body: { count: all.length, filters: Object.fromEntries([...new URLSearchParams(filters)].map(([k, v]) => [k.slice(0, 60), v.slice(0, 60)])) } });
       download(`sinaly-ocorrencias-${new Date().toISOString().slice(0, 10)}.csv`, toCsv(all, { category: categoryName, status: statusName }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Falha ao exportar");
