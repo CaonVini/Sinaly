@@ -46,7 +46,7 @@ function ItemForm({ withIcon, initial, submitLabel, onSubmit, onCancel }: { with
 
   return (
     <form onSubmit={submit} className="space-y-3 rounded-lg border bg-muted/40 p-4">
-      <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+      <div className="grid gap-3">
         <div className="space-y-2">
           <Label htmlFor="cfg-name">Nome</Label>
           <Input id="cfg-name" value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} maxLength={40} placeholder={withIcon ? "Ex.: Coleta de lixo" : "Ex.: Aguardando peça"} className="bg-card" />
@@ -119,7 +119,8 @@ function ItemList({ kind, items, reload }: { kind: "categories" | "statuses"; it
   };
 
   return (
-    <div className="space-y-4">
+    <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
+      <div className="space-y-3">
       {error && <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
       <ul className="divide-y rounded-xl border bg-card">
         {items.map((it, i) => {
@@ -176,8 +177,9 @@ function ItemList({ kind, items, reload }: { kind: "categories" | "statuses"; it
           );
         })}
       </ul>
+      </div>
 
-      <div>
+      <div className="xl:sticky xl:top-6">
         <h3 className="mb-2 text-sm font-medium">{isCat ? "Nova categoria" : "Novo status"}</h3>
         <ItemForm
           withIcon={isCat}
@@ -226,36 +228,79 @@ function History() {
   );
 }
 
+type GeoStatus = { enabled: boolean; missing: number; pending: number; filled: number; notFound: number; failed: number; lastError: string | null; lastErrorAt: string | null; lastFilledAt: string | null };
+
+function Stat({ label, value, tone }: { label: string; value: ReactNode; tone?: "bad" }) {
+  return (
+    <div className="rounded-lg border bg-card p-3">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className={cn("mt-1 text-2xl font-semibold tabular-nums", tone === "bad" && "text-destructive")}>{value}</p>
+    </div>
+  );
+}
+
 function Backfill() {
+  const st = useApi<GeoStatus>("staff/geocode/status");
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<ReactNode>(null);
+  const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const g = st.data;
+
   async function run() {
     setBusy(true);
     setError(null);
     setMsg(null);
     try {
       const r = await api<{ queued: number; remaining: number }>("staff/geocode/backfill", { method: "POST" });
-      setMsg(r.queued === 0 ? "Todas as ocorrências já têm bairro." : `${r.queued} ocorrências na fila (cerca de ${Math.ceil((r.queued * 1.1) / 60)} min). ${r.remaining ? `Faltam mais ${r.remaining}: rode de novo depois.` : ""}`);
+      setMsg(r.queued === 0 ? "Todas as ocorrências já têm bairro." : `${r.queued} ocorrências na fila (cerca de ${Math.max(1, Math.ceil((r.queued * 1.1) / 60))} min). ${r.remaining ? `Faltam mais ${r.remaining}: rode de novo depois.` : ""}`);
+      st.reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro");
     } finally {
       setBusy(false);
     }
   }
+
   return (
-    <Card>
-      <CardHeader><CardTitle>Preencher bairros automaticamente</CardTitle></CardHeader>
-      <CardContent className="space-y-3 text-sm">
-        <p>Toda ocorrência nova sem bairro é consultada pelo ponto no mapa (geocodificação reversa) e o bairro é preenchido em segundo plano. Cada preenchimento aparece no histórico da ocorrência como &ldquo;automático&rdquo;, e você pode corrigir manualmente.</p>
-        <p className="text-muted-foreground">Só as coordenadas do problema saem do servidor para o serviço de mapas (OpenStreetMap/Nominatim); nenhum dado pessoal. O serviço público limita a 1 consulta por segundo, então o lote de ocorrências antigas leva alguns minutos.</p>
-        <div className="flex flex-wrap items-center gap-3">
-          <Button onClick={run} disabled={busy}>{busy ? <Loader2 className="animate-spin" /> : <MapPin />} Preencher bairros que faltam</Button>
-          {msg && <span role="status" className="text-muted-foreground">{msg}</span>}
-        </div>
-        {error && <p role="alert" className="text-destructive">{error}</p>}
-      </CardContent>
-    </Card>
+    <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
+      <Card>
+        <CardHeader><CardTitle>Preencher bairros automaticamente</CardTitle></CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          <p>Toda ocorrência nova sem bairro é consultada pelo ponto no mapa (geocodificação reversa) e o bairro é preenchido em segundo plano. Cada preenchimento aparece no histórico da ocorrência como &ldquo;automático&rdquo;, e você pode corrigir manualmente.</p>
+          <p className="text-muted-foreground">Só as coordenadas do problema saem do servidor para o serviço de mapas (OpenStreetMap/Nominatim); nenhum dado pessoal. O serviço público limita a 1 consulta por segundo, então o lote de ocorrências antigas leva alguns minutos. Ao reiniciar, o sistema também tenta preencher as que faltam.</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={run} disabled={busy || g?.enabled === false}>{busy ? <Loader2 className="animate-spin" /> : <MapPin />} Preencher bairros que faltam</Button>
+            <Button variant="ghost" size="sm" onClick={st.reload}>Atualizar números</Button>
+            {msg && <span role="status" className="text-muted-foreground">{msg}</span>}
+          </div>
+          {error && <p className="text-destructive">{error}</p>}
+        </CardContent>
+      </Card>
+
+      <div className="space-y-3">
+        <h3 className="text-sm font-medium">Situação</h3>
+        {!g ? <Skeleton className="h-40 w-full" /> : (
+          <>
+            <p className={cn("rounded-lg border px-3 py-2 text-sm", g.enabled ? "bg-card" : "border-destructive/30 bg-destructive/10 text-destructive")}>
+              {g.enabled ? "Ligado." : "Desligado: defina GEOCODER_ENABLED=true no servidor."}
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <Stat label="Sem bairro" value={g.missing} />
+              <Stat label="Na fila agora" value={g.pending} />
+              <Stat label="Preenchidas" value={g.filled} />
+              <Stat label="Sem bairro no mapa" value={g.notFound} />
+              <Stat label="Falhas do serviço" value={g.failed} tone={g.failed ? "bad" : undefined} />
+            </div>
+            {g.lastError && (
+              <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                Última falha{g.lastErrorAt ? ` (${fmtDateTime(g.lastErrorAt)})` : ""}: {g.lastError}. A ocorrência fica sem bairro e pode ser preenchida à mão ou reprocessada aqui.
+              </p>
+            )}
+            <p className="text-xs text-muted-foreground">Contadores desde a última reinicialização da API.</p>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -274,7 +319,7 @@ export default function ConfiguracaoPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4 p-4 md:p-6">
+    <div className="min-w-0 space-y-4 p-4 md:p-6">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Configuração</h1>
         <p className="text-sm text-muted-foreground">Categorias e status que aparecem no mapa, nos filtros, na planilha e nos relatórios. Toda alteração fica registrada no histórico.</p>

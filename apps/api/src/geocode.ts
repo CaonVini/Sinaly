@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, count, desc, eq, isNull } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import { db } from "./db/client.js";
 import { occurrenceAudit, occurrences, users } from "./db/schema.js";
@@ -14,11 +14,12 @@ const MAX_QUEUE = 1_000;
 export const nominatim: ReverseGeocoder = async (lat, lng) => {
   const url = new URL("/reverse", env.GEOCODER_URL);
   url.search = new URLSearchParams({ format: "jsonv2", lat: String(lat), lon: String(lng), zoom: "16", addressdetails: "1", "accept-language": "pt-BR" }).toString();
-  const res = await fetch(url, { headers: { "User-Agent": env.GEOCODER_USER_AGENT }, signal: AbortSignal.timeout(8_000) });
-  if (!res.ok) return null;
+  const res = await fetch(url, { headers: { "User-Agent": env.GEOCODER_USER_AGENT, Accept: "application/json" }, signal: AbortSignal.timeout(10_000) });
+  // Falha de serviço (403 UA bloqueado, 429 limite, 5xx) lança: a fila registra o motivo em vez de fingir que "não achou".
+  if (!res.ok) throw new Error(`geocoder respondeu HTTP ${res.status}`);
   const body = (await res.json()) as { address?: Record<string, string> };
   const a = body.address ?? {};
-  const name = a.suburb ?? a.neighbourhood ?? a.city_district ?? a.quarter ?? a.village ?? null;
+  const name = a.suburb ?? a.neighbourhood ?? a.city_district ?? a.quarter ?? a.borough ?? a.village ?? a.hamlet ?? null;
   return name && name.length >= 2 ? name.slice(0, 80) : null;
 };
 
@@ -29,6 +30,7 @@ export const nominatim: ReverseGeocoder = async (lat, lng) => {
 export function createGeocodeQueue(geocode: ReverseGeocoder | null, log: FastifyBaseLogger, gapMs = MIN_GAP_MS) {
   const pending = new Set<string>();
   let running: Promise<void> | null = null;
+  const stats = { filled: 0, notFound: 0, failed: 0, lastError: null as string | null, lastErrorAt: null as string | null, lastFilledAt: null as string | null };
 
   async function fill(id: string) {
     const [row] = await db
@@ -38,7 +40,10 @@ export function createGeocodeQueue(geocode: ReverseGeocoder | null, log: Fastify
     if (!row || !geocode) return;
     const { x: lng, y: lat } = row.lat;
     const name = await geocode(lat, lng);
-    if (!name) return;
+    if (!name) {
+      stats.notFound++; // o serviço respondeu, mas não há bairro naquele ponto
+      return;
+    }
     await db.transaction(async (tx) => {
       // A condição "ainda sem bairro" evita sobrescrever um bairro que alguém digitou enquanto a fila andava.
       const updated = await tx
@@ -57,6 +62,8 @@ export function createGeocodeQueue(geocode: ReverseGeocoder | null, log: Fastify
         changes: { neighborhood: { from: null, to: name, auto: true } },
         ip: null,
       });
+      stats.filled++;
+      stats.lastFilledAt = new Date().toISOString();
     });
   }
 
@@ -67,6 +74,9 @@ export function createGeocodeQueue(geocode: ReverseGeocoder | null, log: Fastify
       try {
         await fill(id);
       } catch (err) {
+        stats.failed++;
+        stats.lastError = err instanceof Error ? `${err.message}${err.cause ? ` (${String((err.cause as Error).message ?? err.cause)})` : ""}` : String(err);
+        stats.lastErrorAt = new Date().toISOString();
         log.warn({ err, id }, "geocodificação falhou");
       }
       if (pending.size > 0) await new Promise((r) => setTimeout(r, gapMs));
@@ -87,6 +97,19 @@ export function createGeocodeQueue(geocode: ReverseGeocoder | null, log: Fastify
       while (running) await running;
     },
     size: () => pending.size,
+    stats: () => ({ ...stats, pending: pending.size }),
+    /** Enfileira ocorrências sem bairro (mais novas primeiro). Devolve quantas entraram e quantas ainda faltam. */
+    async backfill(limit = 200) {
+      const rows = await db.select({ id: occurrences.id }).from(occurrences).where(isNull(occurrences.neighborhood)).orderBy(desc(occurrences.createdAt)).limit(limit);
+      let queued = 0;
+      for (const r of rows) if (this.enqueue(r.id)) queued++;
+      const [total] = await db.select({ n: count() }).from(occurrences).where(isNull(occurrences.neighborhood));
+      return { queued, remaining: Math.max(0, (total?.n ?? 0) - queued) };
+    },
+    async missing() {
+      const [total] = await db.select({ n: count() }).from(occurrences).where(isNull(occurrences.neighborhood));
+      return total?.n ?? 0;
+    },
   };
 }
 export type GeocodeQueue = ReturnType<typeof createGeocodeQueue>;

@@ -208,13 +208,15 @@ export async function configRoutes(app: FastifyInstance, opts: { rateLimit: bool
   });
 
   // ---------- bairro automático ----------
+  app.get("/staff/geocode/status", { preHandler: gestorOnly }, async () => ({
+    enabled: opts.geocode.enabled,
+    missing: await opts.geocode.missing(),
+    ...opts.geocode.stats(),
+  }));
+
   // Enfileira até 200 ocorrências sem bairro por chamada (as mais novas primeiro).
   app.post("/staff/geocode/backfill", { preHandler: gestorOnly, ...rl(5) }, async () => {
     if (!opts.geocode.enabled) throw new HttpError(409, "Bairro automático está desligado (GEOCODER_ENABLED).");
-    const rows = await db.select({ id: occurrences.id }).from(occurrences).where(sql`${occurrences.neighborhood} is null`).orderBy(desc(occurrences.createdAt)).limit(200);
-    let queued = 0;
-    for (const r of rows) if (opts.geocode.enqueue(r.id)) queued++;
-    const [total] = await db.select({ n: count() }).from(occurrences).where(sql`${occurrences.neighborhood} is null`);
-    return { queued, remaining: Math.max(0, (total?.n ?? 0) - queued) };
+    return opts.geocode.backfill(200);
   });
 }
