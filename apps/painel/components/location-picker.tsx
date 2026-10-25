@@ -1,6 +1,9 @@
 "use client";
 import type { Map as LMap, Marker } from "leaflet";
 import { useEffect, useRef } from "react";
+import { isInsideArea } from "@sinaly/shared";
+import { useMeta } from "@/lib/meta";
+import { addBaseLayer, lockToArea } from "@/lib/tiles";
 import { PIN_ANCHOR, PIN_SIZE, pinHtml } from "@/lib/pin";
 
 export type Point = { lat: number; lng: number };
@@ -13,6 +16,9 @@ export function LocationPicker({ value, onChange, center }: { value: Point | nul
   onChangeRef.current = onChange;
   const latest = useRef(value);
   latest.current = value;
+  const { meta } = useMeta();
+  const areaRef = useRef(meta.serviceArea);
+  areaRef.current = meta.serviceArea;
 
   function draw() {
     const s = st.current;
@@ -34,12 +40,14 @@ export function LocationPicker({ value, onChange, center }: { value: Point | nul
       if (dead || !el.current) return;
       const start = latest.current ?? center;
       const map = L.map(el.current).setView(start ? [start.lat, start.lng] : [-14.2, -51.9], start ? 15 : 4);
-      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19,
-        attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a>',
-        referrerPolicy: "origin",
-      }).addTo(map);
-      map.on("click", (e) => onChangeRef.current({ lat: Number(e.latlng.lat.toFixed(6)), lng: Number(e.latlng.lng.toFixed(6)) }));
+      addBaseLayer(L, map);
+      const area = lockToArea(L, map, areaRef.current);
+      if (area && !start) map.fitBounds(area);
+      // Fora da área de atuação o clique não marca (a API também recusaria).
+      map.on("click", (e) => {
+        if (!isInsideArea(areaRef.current, e.latlng.lat, e.latlng.lng)) return;
+        onChangeRef.current({ lat: Number(e.latlng.lat.toFixed(6)), lng: Number(e.latlng.lng.toFixed(6)) });
+      });
       st.current = { L, map, marker: null };
       draw();
     })();

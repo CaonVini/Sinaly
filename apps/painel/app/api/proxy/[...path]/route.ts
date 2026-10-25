@@ -18,6 +18,8 @@ const ROUTES: { method: string; re: RegExp }[] = [
   { method: "DELETE", re: new RegExp(`^staff/config/(categories|statuses)/${SLUG}$`) },
   { method: "PUT", re: /^staff\/config\/(categories|statuses)-order$/ },
   { method: "PUT", re: /^staff\/config\/geocoder$/ },
+  { method: "PUT", re: /^staff\/config\/service-area$/ },
+  { method: "GET", re: /^staff\/geocode\/search$/ },
   { method: "POST", re: /^staff\/geocode\/backfill$/ },
   { method: "GET", re: /^staff\/geocode\/status$/ },
   // Equipe e trilha de acessos (LGPD): só admin na API; a troca de credenciais exige o TOTP do admin.

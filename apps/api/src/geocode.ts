@@ -24,6 +24,30 @@ export const nominatim: ReverseGeocoder = async (lat, lng) => {
   return name && name.length >= 2 ? name.slice(0, 80) : null;
 };
 
+export type Place = { name: string; detail: string; bbox: [number, number, number, number] };
+
+/**
+ * Busca de município pelo nome (Configuração → Área de atuação). Só no Brasil, até 5 resultados.
+ * O Nominatim devolve boundingbox como [sul, norte, oeste, leste] em texto; aqui vira [oeste, sul, leste, norte].
+ */
+export async function searchPlaces(q: string): Promise<Place[]> {
+  const url = new URL("/search", env.GEOCODER_URL);
+  url.search = new URLSearchParams({ format: "jsonv2", q, countrycodes: "br", limit: "5", addressdetails: "1", "accept-language": "pt-BR" }).toString();
+  const res = await fetch(url, { headers: { "User-Agent": env.GEOCODER_USER_AGENT, Accept: "application/json" }, signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) throw new Error(`geocoder respondeu HTTP ${res.status}`);
+  const body = (await res.json()) as { name?: string; display_name?: string; boundingbox?: string[]; address?: Record<string, string> }[];
+  const out: Place[] = [];
+  for (const r of Array.isArray(body) ? body : []) {
+    const [s, n, w, e] = (r.boundingbox ?? []).map(Number);
+    if (![s, n, w, e].every((v) => Number.isFinite(v))) continue;
+    const a = r.address ?? {};
+    const name = (r.name ?? a.city ?? a.town ?? a.municipality ?? "").slice(0, 80);
+    if (name.length < 2) continue;
+    out.push({ name, detail: [a.state, a.country].filter(Boolean).join(", ").slice(0, 120), bbox: [w!, s!, e!, n!] });
+  }
+  return out;
+}
+
 /**
  * Fila em memória que preenche o bairro das ocorrências sem bairro, uma por vez e respeitando o intervalo mínimo.
  * Melhor esforço: se o serviço falhar, a ocorrência continua sem bairro e pode ser reprocessada pelo gestor.
@@ -31,6 +55,20 @@ export const nominatim: ReverseGeocoder = async (lat, lng) => {
 export function createGeocodeQueue(geocode: ReverseGeocoder | null, log: FastifyBaseLogger, gapMs = MIN_GAP_MS) {
   const pending = new Set<string>();
   let running: Promise<void> | null = null;
+  // Um único "relógio" para a fila e as consultas do app: cada chamada reserva o próximo horário livre.
+  // Assim a consulta interativa entra entre dois itens da fila (espera no máximo ~1 intervalo), sem estourar o limite.
+  let nextSlot = 0;
+  async function call(lat: number, lng: number) {
+    const now = Date.now();
+    const at = Math.max(now, nextSlot);
+    nextSlot = at + gapMs;
+    if (at > now) await new Promise((r) => setTimeout(r, at - now));
+    return geocode!(lat, lng);
+  }
+  // Cache por ponto arredondado (~11 m): marcar e desmarcar o mesmo lugar não gasta outra consulta.
+  const cache = new Map<string, string | null>();
+  const CACHE_MAX = 500;
+
   const stats = { filled: 0, notFound: 0, failed: 0, lastError: null as string | null, lastErrorAt: null as string | null, lastFilledAt: null as string | null };
 
   async function fill(id: string) {
@@ -42,7 +80,7 @@ export function createGeocodeQueue(geocode: ReverseGeocoder | null, log: Fastify
       .where(and(eq(occurrences.id, id), isNull(occurrences.neighborhood)));
     if (!row || !geocode) return;
     const { x: lng, y: lat } = row.lat;
-    const name = await geocode(lat, lng);
+    const name = await call(lat, lng);
     if (!name) {
       stats.notFound++; // o serviço respondeu, mas não há bairro naquele ponto
       return;
@@ -82,7 +120,6 @@ export function createGeocodeQueue(geocode: ReverseGeocoder | null, log: Fastify
         stats.lastErrorAt = new Date().toISOString();
         log.warn({ err, id }, "geocodificação falhou");
       }
-      if (pending.size > 0) await new Promise((r) => setTimeout(r, gapMs));
     }
   }
 
@@ -95,11 +132,29 @@ export function createGeocodeQueue(geocode: ReverseGeocoder | null, log: Fastify
       running ??= drain().finally(() => (running = null));
       return true;
     },
-    /** Espera a fila esvaziar (usado nos testes e no desligamento). */
+    /**
+     * Bairro de um ponto, na hora (botão do app). Respeita o liga/desliga do gestor e o mesmo limite de ritmo da fila.
+     * Devolve null se desligado, sem resultado ou se o serviço falhar (o cidadão pode digitar).
+     */
+    async lookup(lat: number, lng: number): Promise<{ enabled: boolean; neighborhood: string | null }> {
+      if (!geocode || !(await geocoderSetting())) return { enabled: false, neighborhood: null };
+      const key = `${lat.toFixed(4)},${lng.toFixed(4)}`;
+      if (cache.has(key)) return { enabled: true, neighborhood: cache.get(key)! };
+      try {
+        const name = await call(Number(lat.toFixed(5)), Number(lng.toFixed(5)));
+        if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value!);
+        cache.set(key, name);
+        return { enabled: true, neighborhood: name };
+      } catch (err) {
+        log.warn({ err }, "geocodificação interativa falhou");
+        return { enabled: true, neighborhood: null };
+      }
+    },
     /** Descarta a fila (usado ao desligar). */
     clear() {
       pending.clear();
     },
+    /** Espera a fila esvaziar (usado nos testes e no desligamento). */
     async idle() {
       while (running) await running;
     },

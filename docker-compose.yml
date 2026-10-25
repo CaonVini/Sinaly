@@ -66,6 +66,7 @@ services:
       GEOCODER_ENABLED: ${GEOCODER_ENABLED:-true}
       GEOCODER_URL: ${GEOCODER_URL:-https://nominatim.openstreetmap.org}
       GEOCODER_USER_AGENT: ${GEOCODER_USER_AGENT:-Sinaly-MVP/0.1 (prefeitura)}
+      SERVICE_AREA_DEFAULT: ${SERVICE_AREA_DEFAULT:-Concórdia (SC)|-52.35,-27.48,-51.78,-27.00}
     depends_on:
       migrate:
         condition: service_completed_successfully

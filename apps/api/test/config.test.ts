@@ -14,6 +14,7 @@ const { buildApp } = await import("../src/app.js");
 const { db, pool } = await import("../src/db/client.js");
 const { users } = await import("../src/db/schema.js");
 const { invalidateMeta } = await import("../src/meta.js");
+const { invalidateSettings } = await import("../src/settings.js");
 const { encrypt } = await import("../src/security/crypto.js");
 const { hashPassword } = await import("../src/security/password.js");
 const { generateTotpSecret, totpAt, currentStep } = await import("../src/security/totp.js");
@@ -316,5 +317,47 @@ describe("bairro automático", () => {
     const res = await off.inject({ method: "POST", url: "/staff/geocode/backfill", headers: { authorization: `Bearer ${g}` } });
     expect(res.statusCode).toBe(409);
     await off.close();
+  });
+});
+
+describe("área de atuação", () => {
+  const concordia = { name: "Concórdia", bbox: [-52.35, -27.48, -51.78, -27.0] };
+  afterEach(async () => {
+    await pool.query("delete from app_settings where key = 'service_area'");
+    invalidateSettings();
+  });
+
+  it("só admin altera; vale na hora para /meta e para criar/mover ocorrências; mudança auditada", async () => {
+    const admin = await staff("admin", "adm@prefeitura.gov.br");
+    const gestor = await staff("gestor", "g@prefeitura.gov.br");
+    const cid = await citizen("c@example.com");
+    expect((await send("GET", "/meta")).json().serviceArea).toBeNull(); // sem padrão no .env dos testes
+
+    expect((await send("PUT", "/staff/config/service-area", gestor, { area: concordia })).statusCode).toBe(403);
+    expect((await send("PUT", "/staff/config/service-area", admin, { area: { name: "Brasil", bbox: [-74, -34, -34, 5] } })).statusCode).toBe(400);
+    expect((await send("PUT", "/staff/config/service-area", admin, { area: { ...concordia, bbox: [-51, -27, -52, -26] } })).statusCode).toBe(400);
+    expect((await send("PUT", "/staff/config/service-area", admin, { area: concordia })).json()).toEqual({ area: concordia });
+    expect((await send("GET", "/meta")).json().serviceArea).toEqual(concordia);
+
+    const fora = await multipartCreate("/occurrences", cid, occ()); // São Paulo
+    expect(fora.statusCode).toBe(400);
+    expect(fora.json().error).toContain("Concórdia");
+    const dentro = await multipartCreate("/occurrences", cid, occ({ lat: "-27.2335", lng: "-52.0278" }));
+    expect(dentro.statusCode).toBe(201);
+    expect((await multipartCreate("/staff/occurrences", admin, occ())).statusCode).toBe(400);
+    expect((await send("PATCH", `/staff/occurrences/${dentro.json().id}`, admin, { lat: -23.5, lng: -46.6 })).statusCode).toBe(400);
+
+    // "sem limite" também é uma escolha gravada
+    expect((await send("PUT", "/staff/config/service-area", admin, { area: null })).statusCode).toBe(200);
+    expect((await multipartCreate("/occurrences", cid, occ())).statusCode).toBe(201);
+    const audit = (await pool.query("select changes from config_audit where entity_key = 'service_area' order by id")).rows;
+    expect(audit.map((a) => a.changes.area.to?.name ?? null)).toEqual(["Concórdia", null]);
+  });
+
+  it("busca de município é só do admin e valida o termo", async () => {
+    const gestor = await staff("gestor", "g@prefeitura.gov.br");
+    const admin = await staff("admin", "adm@prefeitura.gov.br");
+    expect((await send("GET", "/staff/geocode/search?q=Concordia", gestor)).statusCode).toBe(403);
+    expect((await send("GET", "/staff/geocode/search?q=a", admin)).statusCode).toBe(400);
   });
 });

@@ -13,6 +13,9 @@ const schema = z.object({
   GEOCODER_ENABLED: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
   GEOCODER_URL: z.string().url().default("https://nominatim.openstreetmap.org"),
   GEOCODER_USER_AGENT: z.string().min(5).default("Sinaly-MVP/0.1 (prefeitura)"),
+  // Área de atuação inicial, enquanto o admin não escolher outra em Configuração. Formato: "Nome|oeste,sul,leste,norte".
+  // Vazio = sem limite. O docker-compose usa Concórdia (SC) como padrão.
+  SERVICE_AREA_DEFAULT: z.string().default(""),
   // Segredos: gere com `openssl rand -base64 48` (JWT/pepper) e `openssl rand -base64 32` (chave).
   JWT_SECRET: z.string().min(32),
   CPF_HASH_PEPPER: z.string().min(32),

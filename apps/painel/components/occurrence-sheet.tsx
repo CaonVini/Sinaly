@@ -1,10 +1,10 @@
 "use client";
 import { SOURCE_LABELS, type Status } from "@sinaly/shared";
-import { ExternalLink, ImageOff, Loader2, Pencil, Phone } from "lucide-react";
+import { ArrowRight, Check, ExternalLink, ImageOff, Loader2, Pencil, Phone } from "lucide-react";
 import { useState } from "react";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { CategoryIcon } from "@/components/category-icon";
 import { Input, Textarea } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -59,10 +59,10 @@ function Detail({ id, onChanged }: { id: string; onChanged: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [photoOk, setPhotoOk] = useState(true);
   const [hood, setHood] = useState<string | null>(null);
-  const { meta, statusName, categoryName, targets, status: statusOf } = useMeta();
+  const { statusName, categoryName, targets, status: statusOf } = useMeta();
   const o = occ.data;
 
-  async function save(body: Record<string, unknown>) {
+  async function save(body: Record<string, unknown>): Promise<boolean> {
     setBusy(true);
     setError(null);
     try {
@@ -72,8 +72,10 @@ function Detail({ id, onChanged }: { id: string; onChanged: () => void }) {
       occ.reload();
       audit.reload();
       onChanged();
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro ao salvar");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -148,20 +150,13 @@ function Detail({ id, onChanged }: { id: string; onChanged: () => void }) {
           </section>
         )}
 
-        <section className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>Categoria</Label>
-            <Select value={o.category} onValueChange={(v) => save({ category: v })} disabled={busy}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>{meta.categories.filter((c) => c.active || c.slug === o.category).map((c) => <SelectItem key={c.slug} value={c.slug}>{c.name}</SelectItem>)}</SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>Local</Label>
-            <a className="flex h-9 items-center gap-1.5 text-sm text-primary hover:underline" target="_blank" rel="noopener noreferrer" href={`https://www.openstreetmap.org/?mlat=${o.lat}&mlon=${o.lng}#map=18/${o.lat}/${o.lng}`}>
-              <span className="font-mono text-xs">{o.lat.toFixed(5)}, {o.lng.toFixed(5)}</span> <ExternalLink className="size-3.5" />
-            </a>
-          </div>
+        <CategoryField current={o.category} busy={busy} onConfirm={(c) => save({ category: c })} />
+
+        <section className="space-y-2">
+          <Label>Local</Label>
+          <a className="flex h-9 items-center gap-1.5 text-sm text-primary hover:underline" target="_blank" rel="noopener noreferrer" href={`https://www.openstreetmap.org/?mlat=${o.lat}&mlon=${o.lng}#map=18/${o.lat}/${o.lng}`}>
+            <span className="font-mono text-xs">{o.lat.toFixed(5)}, {o.lng.toFixed(5)}</span> <ExternalLink className="size-3.5" />
+          </a>
         </section>
 
         <section className="space-y-2">
@@ -206,5 +201,65 @@ function Detail({ id, onChanged }: { id: string; onChanged: () => void }) {
         </section>
       </div>
     </>
+  );
+}
+
+/**
+ * Categoria: mostra a atual em destaque; "Alterar" abre a grade de categorias e a troca só vale depois de
+ * confirmar ("De X para Y"). A mudança entra no histórico de alterações (auditoria da API).
+ */
+function CategoryField({ current, busy, onConfirm }: { current: string; busy: boolean; onConfirm: (slug: string) => Promise<boolean> }) {
+  const { meta, category, categoryName } = useMeta();
+  const [open, setOpen] = useState(false);
+  const [pick, setPick] = useState<string | null>(null);
+  const cur = category(current);
+  const close = () => (setOpen(false), setPick(null));
+
+  return (
+    <section className="space-y-2">
+      <Label>Categoria</Label>
+      <div className="flex items-center gap-3 rounded-lg border p-3">
+        <span className="grid size-9 place-items-center rounded-full" style={{ background: `${cur?.color ?? "#64748b"}1f`, color: cur?.color ?? "#64748b" }}>
+          <CategoryIcon category={current} className="size-4.5" />
+        </span>
+        <span className="flex-1 text-sm font-medium">{categoryName(current)}</span>
+        {!open && <Button variant="outline" size="sm" onClick={() => setOpen(true)} disabled={busy}>Alterar</Button>}
+      </div>
+      {open && (
+        <div className="space-y-3 rounded-lg border bg-muted/40 p-3">
+          <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Nova categoria">
+            {meta.categories.filter((c) => c.active && c.slug !== current).map((c) => (
+              <button
+                key={c.slug}
+                type="button"
+                role="radio"
+                aria-checked={pick === c.slug}
+                onClick={() => setPick(c.slug)}
+                className={cn("flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-left text-sm transition-colors hover:bg-muted", pick === c.slug && "ring-2")}
+                style={pick === c.slug ? ({ borderColor: c.color, "--tw-ring-color": `${c.color}55` } as React.CSSProperties) : undefined}
+              >
+                <span className="grid size-7 shrink-0 place-items-center rounded-full" style={{ background: `${c.color}1f`, color: c.color }}>
+                  <CategoryIcon category={c.slug} className="size-3.5" />
+                </span>
+                <span className="truncate">{c.name}</span>
+              </button>
+            ))}
+          </div>
+          {pick ? (
+            <p className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
+              De <span className="font-medium text-foreground">{categoryName(current)}</span> <ArrowRight className="size-3.5" /> <span className="font-medium text-foreground">{categoryName(pick)}</span>. Fica registrado no histórico.
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">Escolha a categoria correta.</p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={close}>Cancelar</Button>
+            <Button size="sm" disabled={!pick || busy} onClick={() => pick && onConfirm(pick).then((ok) => ok && close())}>
+              {busy ? <Loader2 className="animate-spin" /> : <Check />} Confirmar
+            </Button>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }

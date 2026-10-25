@@ -5,8 +5,34 @@
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "android": { "package": "br.unc.sinaly" },
-    "ios": { "bundleIdentifier": "br.unc.sinaly" },
-    "web": { "bundler": "metro" }
+    "backgroundColor": "#f7f8fc",
+    "primaryColor": "#2349d6",
+    "android": {
+      "package": "br.unc.sinaly",
+      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION", "CAMERA"],
+      "blockedPermissions": ["ACCESS_BACKGROUND_LOCATION", "RECORD_AUDIO"]
+    },
+    "ios": {
+      "bundleIdentifier": "br.unc.sinaly",
+      "supportsTablet": false
+    },
+    "web": { "bundler": "metro" },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "O Sinaly usa suas fotos para anexar a imagem do problema ao relato.",
+          "cameraPermission": "O Sinaly usa a câmera para você fotografar o problema que está relatando.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "O Sinaly usa sua localização para marcar no mapa onde está o problema."
+        }
+      ],
+      "expo-secure-store"
+    ]
   }
 }

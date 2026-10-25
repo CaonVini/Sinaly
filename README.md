@@ -8,7 +8,7 @@ Plataforma de gestão colaborativa de problemas urbanos. O cidadão registra oco
 | --- | --- |
 | `apps/api` | API Fastify + TypeScript + Drizzle (Postgres/PostGIS) |
 | `apps/painel` | Painel da prefeitura (Next.js) |
-| `apps/app` | App do cidadão (Expo: Android + web) |
+| `apps/app` | App do cidadão (Expo, Android e iOS) — veja `apps/app/README.md` |
 | `packages/shared` | Tipos e schemas Zod usados pelos três |
 | `infra/` | Inicialização do Postgres |
 

@@ -7,8 +7,10 @@ import {
   createOccurrenceFieldsSchema,
   exportAuditSchema,
   listQuerySchema,
+  reverseGeocodeQuerySchema,
   mapQuerySchema,
   activityQuerySchema,
+  isInsideArea,
   staffCreateFieldsSchema,
   staffUpdateSchema,
   type Category,
@@ -25,6 +27,7 @@ import { decodeCursor, encodeCursor, HttpError, limitConfig, parse, UUID_RE } fr
 import { getMeta } from "../meta.js";
 import { auditAccess } from "../access-audit.js";
 import { decrypt, encrypt } from "../security/crypto.js";
+import { serviceArea } from "../settings.js";
 import { openObject, thumbKey } from "../storage.js";
 
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
@@ -182,6 +185,12 @@ async function photoOrThrow(file: Buffer): Promise<string> {
   }
 }
 
+/** Recusa pontos fora da área de atuação configurada pelo admin (a trava do mapa no cliente não basta). */
+async function assertInArea(lat: number, lng: number) {
+  const area = await serviceArea();
+  if (!isInsideArea(area, lat, lng)) throw new HttpError(400, `O local fica fora da área atendida (${area!.name}).`, { location: [`Fora da área atendida (${area!.name})`] });
+}
+
 const idParam = (req: FastifyRequest) => {
   const id = (req.params as { id?: string }).id;
   if (!id || !UUID_RE.test(id)) throw new HttpError(404, "Ocorrência não encontrada");
@@ -197,6 +206,7 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
   app.post("/occurrences", { preHandler: app.requireRole("cidadao"), ...rl(20, "1 hour") }, async (req, reply) => {
     const { fields, file } = await readMultipart(req);
     const data = parse(createOccurrenceFieldsSchema, fields);
+    await assertInArea(data.lat, data.lng);
     const authorId = req.auth.userId;
     const { cat } = await getMeta();
     if (!cat.get(data.category)?.active) throw new HttpError(400, "Dados inválidos", { category: ["Categoria inválida"] });
@@ -241,6 +251,14 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
       await discardPhoto(photoKey);
       throw e;
     }
+  });
+
+  // ---------- cidadão: bairro do ponto marcado ----------
+  // O app nunca fala direto com o geocodificador: passa por aqui para respeitar o liga/desliga do gestor,
+  // o ritmo de 1 consulta/s do serviço e não expor o IP do cidadão a terceiros.
+  app.get("/geocode/reverse", { preHandler: app.authenticate, ...rl(20, "1 minute") }, async (req) => {
+    const q = parse(reverseGeocodeQuerySchema, req.query);
+    return opts.geocode.lookup(q.lat, q.lng);
   });
 
   // ---------- mapa público ----------
@@ -339,6 +357,7 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
   app.post("/staff/occurrences", { preHandler: staffOnly, ...rl(60, "1 minute") }, async (req, reply) => {
     const { fields, file } = await readMultipart(req);
     const data = parse(staffCreateFieldsSchema, fields);
+    await assertInArea(data.lat, data.lng);
     const actor = req.auth;
     const { cat, st } = await getMeta();
     if (!cat.get(data.category)?.active) throw new HttpError(400, "Dados inválidos", { category: ["Categoria inválida"] });
@@ -398,6 +417,7 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
   app.patch("/staff/occurrences/:id", { preHandler: staffOnly, ...rl(60, "1 minute") }, async (req) => {
     const id = idParam(req);
     const body = parse(staffUpdateSchema, req.body);
+    if (body.lat !== undefined && body.lng !== undefined) await assertInArea(body.lat, body.lng);
     const actor = req.auth;
     const { cat, st } = await getMeta();
     if (body.category && !cat.get(body.category)?.active) throw new HttpError(400, "Dados inválidos", { category: ["Categoria inválida"] });
