@@ -540,6 +540,21 @@ describe("notificações", () => {
     expect((await send("GET", "/me/notifications")).statusCode).toBe(401);
   });
 
+  it("limpar avisos apaga só os do próprio usuário e mantém o histórico da ocorrência", async () => {
+    const a = await citizen("a@example.com", "529.982.247-25");
+    const b = await citizen("b@example.com", "390.533.447-05");
+    const st = await staff();
+    const oa = await create(a.token);
+    const ob = await create(b.token);
+    await patch(st, oa.id, { status: "em_analise" });
+    await patch(st, ob.id, { status: "em_analise" });
+    expect((await send("DELETE", "/me/notifications")).statusCode).toBe(401);
+    expect((await send("DELETE", "/me/notifications", a.token)).json()).toEqual({ removed: 1 });
+    expect((await send("GET", "/me/notifications", a.token)).json()).toMatchObject({ items: [], unreadCount: 0 });
+    expect((await send("GET", "/me/notifications", b.token)).json().items).toHaveLength(1);
+    expect((await send("GET", `/occurrences/${oa.id}`, a.token)).json().history).toHaveLength(2);
+  });
+
   it("pagina por cursor sem repetir nem perder itens", async () => {
     const a = await citizen("a@example.com", "529.982.247-25");
     await pool.query(

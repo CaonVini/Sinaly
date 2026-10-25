@@ -38,7 +38,12 @@ export type IconKey = (typeof ICON_KEYS)[number];
 
 export type CategoryMeta = { slug: Category; name: string; color: string; icon: IconKey; active: boolean; system: boolean; sort: number };
 export type StatusMeta = { slug: Status; name: string; color: string; kind: StatusKind; isEntry: boolean; active: boolean; system: boolean; sort: number };
-export type Meta = { categories: CategoryMeta[]; statuses: StatusMeta[]; resolvedVisibleDays: number };
+/** Área de atuação da prefeitura: retângulo [oeste, sul, leste, norte] em graus (WGS84). null = sem limite. */
+export type ServiceArea = { name: string; bbox: [number, number, number, number] };
+export type Meta = { categories: CategoryMeta[]; statuses: StatusMeta[]; resolvedVisibleDays: number; serviceArea?: ServiceArea | null };
+
+export const isInsideArea = (area: ServiceArea | null | undefined, lat: number, lng: number) =>
+  !area || (lng >= area.bbox[0] && lat >= area.bbox[1] && lng <= area.bbox[2] && lat <= area.bbox[3]);
 
 /** Dados iniciais (migração 0004). Os "system" não podem ser apagados nem mudar de tipo. */
 export const SYSTEM_CATEGORIES: Pick<CategoryMeta, "slug" | "name" | "color" | "icon">[] = [
@@ -172,6 +177,9 @@ export const mapQuerySchema = z.object({
   limit: limit(500, 300),
 });
 
+/** GET /geocode/reverse?lat=..&lng=.. (bairro de um ponto, para o botão do app). */
+export const reverseGeocodeQuerySchema = z.object({ lat: numberField.pipe(latitude), lng: numberField.pipe(longitude) });
+
 export const listQuerySchema = z.object({
   limit: limit(100, 30),
   cursor: z.string().max(200).optional(),
@@ -285,6 +293,19 @@ export function slugify(name: string): string {
     .slice(0, 36);
   return base.length >= 2 ? base : `item_${Math.random().toString(36).slice(2, 6)}`;
 }
+
+// ---------- Área de atuação (só admin) ----------
+// Limite generoso: até ~4° de lado (um município grande cabe com folga; um estado inteiro não).
+export const serviceAreaSchema = z
+  .object({
+    name: text(2, 80),
+    bbox: z.tuple([longitude, latitude, longitude, latitude]),
+  })
+  .strict()
+  .refine(({ bbox: [w, s, e, n] }) => w < e && s < n, "Área inválida")
+  .refine(({ bbox: [w, s, e, n] }) => e - w <= 4 && n - s <= 4, "Área grande demais (máximo de 4° de lado)");
+export const serviceAreaPutSchema = z.object({ area: serviceAreaSchema.nullable() }).strict();
+export const placeSearchSchema = z.object({ q: z.string().transform(cleanText).pipe(z.string().min(2).max(100)) });
 
 // ---------- Relatórios ----------
 export const reportQuerySchema = z.object({

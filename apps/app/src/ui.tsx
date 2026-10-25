@@ -89,16 +89,20 @@ const buttonVariants = {
   danger: { bg: colors.card, fg: colors.danger, border: colors.border },
 };
 
-export function Field({ label, error, hint, ...props }: TextInputProps & { label: string; error?: string; hint?: string }) {
+/** `accessory`: botão pequeno dentro do campo, à direita (ex.: preencher o bairro pelo ponto do mapa). */
+export function Field({ label, error, hint, accessory, ...props }: TextInputProps & { label: string; error?: string; hint?: string; accessory?: ReactNode }) {
   return (
     <View style={{ marginBottom: space(3.5) }}>
       <Text style={styles.label}>{label}</Text>
-      <TextInput
-        placeholderTextColor="#9aa2b6"
-        {...props}
-        style={[styles.input, error ? { borderColor: colors.danger } : null, props.multiline ? { minHeight: 110, textAlignVertical: "top" } : null, props.style]}
-        accessibilityLabel={label}
-      />
+      <View>
+        <TextInput
+          placeholderTextColor="#9aa2b6"
+          {...props}
+          style={[styles.input, error ? { borderColor: colors.danger } : null, props.multiline ? { minHeight: 110, textAlignVertical: "top" } : null, accessory ? { paddingRight: 52 } : null, props.style]}
+          accessibilityLabel={label}
+        />
+        {accessory ? <View style={styles.accessory}>{accessory}</View> : null}
+      </View>
       {error ? <Text style={styles.error}>{error}</Text> : hint ? <Text style={styles.hint}>{hint}</Text> : null}
     </View>
   );
@@ -241,6 +245,7 @@ export const styles = StyleSheet.create({
   button: { flexDirection: "row", gap: 8, alignItems: "center", justifyContent: "center", minHeight: 50, paddingHorizontal: space(5), borderRadius: radius.md, borderWidth: 1 },
   buttonText: { fontSize: 16, fontWeight: "700" },
   label: { fontSize: 14, fontWeight: "600", color: colors.text, marginBottom: 6 },
+  accessory: { position: "absolute", right: 4, top: 0, bottom: 0, justifyContent: "center" },
   input: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, color: colors.text },
   error: { color: colors.danger, fontSize: 13, marginTop: 4 },
   hint: { color: colors.muted, fontSize: 13, marginTop: 4 },

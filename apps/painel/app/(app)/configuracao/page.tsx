@@ -2,6 +2,7 @@
 import { ICON_KEYS, type CategoryMeta, type StatusMeta } from "@sinaly/shared";
 import { AlertTriangle, ArrowDown, ArrowUp, Check, Loader2, Lock, MapPin, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState, type FormEvent, type ReactNode } from "react";
+import { ServiceAreaConfig } from "@/components/service-area-config";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,10 +14,11 @@ import { iconFor } from "@/lib/icons";
 import { useMeta } from "@/lib/meta";
 import { cn, fmtDateTime } from "@/lib/utils";
 
-type Tab = "categories" | "statuses" | "bairro" | "historico";
+type Tab = "categories" | "statuses" | "area" | "bairro" | "historico";
 const TABS: { id: Tab; label: string }[] = [
   { id: "categories", label: "Categorias" },
   { id: "statuses", label: "Status" },
+  { id: "area", label: "Área de atuação" },
   { id: "bairro", label: "Bairro automático" },
   { id: "historico", label: "Histórico" },
 ];
@@ -307,14 +309,14 @@ function History() {
   if (error) return <p role="alert" className="text-sm text-destructive">{error}</p>;
   if (!data) return <Skeleton className="h-40 w-full" />;
   if (data.items.length === 0) return <p className="py-8 text-center text-sm text-muted-foreground">Nenhuma alteração de configuração ainda.</p>;
-  const fmt = (v: unknown, key = "") => v === true ? (key === "active" ? "ativo" : "ligado") : v === false ? (key === "active" ? "inativo" : "desligado") : (v === null || v === undefined ? "—" : typeof v === "boolean" ? (v ? "sim" : "não") : Array.isArray(v) ? `${v.length} itens` : String(v));
+  const fmt = (v: unknown, key = "") => v && typeof v === "object" && "name" in v ? String((v as { name: unknown }).name) : v === null && key === "area" ? "sem limite" : v === true ? (key === "active" ? "ativo" : "ligado") : v === false ? (key === "active" ? "inativo" : "desligado") : (v === null || v === undefined ? "—" : typeof v === "boolean" ? (v ? "sim" : "não") : Array.isArray(v) ? `${v.length} itens` : String(v));
   return (
     <ol className="divide-y rounded-xl border bg-card">
       {data.items.map((e) => (
         <li key={e.id} className="space-y-0.5 px-4 py-3 text-sm">
           <p>
             <span className="font-medium">{e.actorName ?? "Gestor"}</span> {ACTION[e.action] ?? e.action} {e.entity === "category" ? "a categoria" : e.entity === "setting" ? "o ajuste" : "o status"}{" "}
-            <span className="font-medium">{e.entityKey === "order" ? "(ordem)" : e.entity === "setting" ? "Bairro automático" : e.entity === "category" ? categoryName(e.entityKey) : statusName(e.entityKey)}</span>
+            <span className="font-medium">{e.entityKey === "order" ? "(ordem)" : e.entity === "setting" ? (e.entityKey === "service_area" ? "Área de atuação" : "Bairro automático") : e.entity === "category" ? categoryName(e.entityKey) : statusName(e.entityKey)}</span>
             <span className="text-muted-foreground"> · {fmtDateTime(e.at)}</span>
           </p>
           {e.action !== "reorder" && (
@@ -457,7 +459,7 @@ export default function ConfiguracaoPage() {
     <div className="min-w-0 space-y-4 p-4 md:p-6">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Configuração</h1>
-        <p className="text-sm text-muted-foreground">Categorias e status que aparecem no mapa, nos filtros, na planilha e nos relatórios. Toda alteração fica registrada no histórico.{me && !isAdmin && " Só o administrador altera; você está em modo de consulta."}</p>
+        <p className="text-sm text-muted-foreground">Categorias, status e área de atuação usados no mapa, nos filtros, na planilha e nos relatórios. Toda alteração fica registrada no histórico.{me && !isAdmin && " Só o administrador altera; você está em modo de consulta."}</p>
       </header>
       <div className="flex flex-wrap gap-1 border-b" role="tablist" aria-label="Seções">
         {TABS.map((t) => (
@@ -468,6 +470,7 @@ export default function ConfiguracaoPage() {
       </div>
       {tab === "categories" && <ItemList kind="categories" items={meta.categories as Item[]} reload={reload} canEdit={isAdmin} />}
       {tab === "statuses" && <ItemList kind="statuses" items={meta.statuses as Item[]} reload={reload} canEdit={isAdmin} />}
+      {tab === "area" && <ServiceAreaConfig canEdit={isAdmin} />}
       {tab === "bairro" && <Backfill canEdit={isAdmin} />}
       {tab === "historico" && <History />}
     </div>

@@ -2,6 +2,7 @@ import * as Location from "expo-location";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { isInsideArea } from "@sinaly/shared";
 import { api, ApiError, type Bbox, type Occurrence } from "../api";
 import { useData, useNav } from "../app-state";
 import { DEFAULT_CENTER } from "../config";
@@ -69,15 +70,26 @@ export function MapScreen() {
     [all, status],
   );
 
+  const area = meta?.serviceArea ?? null;
+  const areaRef = useRef(area);
+  areaRef.current = area;
+  const [outside, setOutside] = useState(false);
+
   const locate = useCallback(async (fly: boolean) => {
     const perm = await Location.requestForegroundPermissionsAsync();
     if (!perm.granted) return;
+    // Fora da área de atuação o mapa não vai até lá (ficaria preso na borda): só avisa.
+    const go = (lat: number, lng: number) => {
+      const ok = isInsideArea(areaRef.current, lat, lng);
+      setOutside(!ok);
+      if (ok && fly) map.current?.flyTo(lat, lng, 16);
+    };
     // Última posição conhecida é instantânea; a leitura nova do GPS refina logo depois.
     const last = await Location.getLastKnownPositionAsync();
-    if (last && fly) map.current?.flyTo(last.coords.latitude, last.coords.longitude, 16);
+    if (last) go(last.coords.latitude, last.coords.longitude);
     const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-    if (fly && (!last || Math.abs(last.coords.latitude - pos.coords.latitude) + Math.abs(last.coords.longitude - pos.coords.longitude) > 0.002)) {
-      map.current?.flyTo(pos.coords.latitude, pos.coords.longitude, 16);
+    if (!last || Math.abs(last.coords.latitude - pos.coords.latitude) + Math.abs(last.coords.longitude - pos.coords.longitude) > 0.002) {
+      go(pos.coords.latitude, pos.coords.longitude);
     }
   }, []);
 
@@ -93,6 +105,7 @@ export function MapScreen() {
       <NativeMap
         ref={map}
         center={DEFAULT_CENTER}
+        area={area}
         markers={markers}
         onRegion={(b, c) => {
           center.current = c;
@@ -107,7 +120,7 @@ export function MapScreen() {
         <View style={{ flexDirection: "row", gap: space(2), alignItems: "center" }} pointerEvents="box-none">
           <FilterButton floating label={filterLabel} active={!!cat || showResolved} loading={loading} onPress={() => setFilterOpen(true)} />
         </View>
-        {error ? <Text style={s.banner}>{error}</Text> : truncated ? <Text style={s.banner}>Muitas ocorrências nesta área. Aproxime o mapa para ver todas.</Text> : null}
+        {error ? <Text style={s.banner}>{error}</Text> : outside && area ? <Text style={s.banner}>Você está fora da área atendida ({area.name}). Dá para ver e registrar só dentro dela.</Text> : truncated ? <Text style={s.banner}>Muitas ocorrências nesta área. Aproxime o mapa para ver todas.</Text> : null}
       </View>
       <FilterSheet
         visible={filterOpen}

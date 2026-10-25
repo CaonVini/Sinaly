@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import type { Occurrence } from "@/lib/client";
 import { statusColor } from "@/components/status-badge";
 import { useMeta } from "@/lib/meta";
+import { addBaseLayer, lockToArea } from "@/lib/tiles";
 import { PIN_ANCHOR, PIN_SIZE, pinHtml } from "@/lib/pin";
 
 const BR_CENTER: [number, number] = [-14.2, -51.9];
@@ -16,6 +17,7 @@ export function OccurrenceMap({ items, selectedId, onSelect, fitKey }: { items: 
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
   const lastFit = useRef<string | null>(null);
+  const areaKey = useRef<string | null>(null);
   // O mapa nasce depois do primeiro render (import dinâmico): a sincronização lê sempre os valores mais recentes.
   const latest = useRef({ items, selectedId, fitKey, meta });
   latest.current = { items, selectedId, fitKey, meta };
@@ -26,8 +28,11 @@ export function OccurrenceMap({ items, selectedId, onSelect, fitKey }: { items: 
       const L = await import("leaflet");
       if (dead || !el.current) return;
       const map = L.map(el.current, { zoomControl: true, worldCopyJump: false }).setView(BR_CENTER, 4);
-      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a>', referrerPolicy: "origin" }).addTo(map);
+      addBaseLayer(L, map);
       state.current = { L, map, markers: new Map() };
+      const area = lockToArea(L, map, latest.current.meta.serviceArea);
+      areaKey.current = JSON.stringify(latest.current.meta.serviceArea ?? null);
+      if (area) map.fitBounds(area);
       sync();
     })();
     return () => {
@@ -45,6 +50,13 @@ export function OccurrenceMap({ items, selectedId, onSelect, fitKey }: { items: 
     const colorOf = new Map(meta.statuses.map((x) => [x.slug, x.color]));
     const iconOf = new Map(meta.categories.map((x) => [x.slug, x.icon]));
     const { L, map, markers } = s;
+    // A área de atuação pode chegar depois (o /meta responde após o mapa nascer) ou ser trocada pelo admin.
+    const key = JSON.stringify(meta.serviceArea ?? null);
+    if (key !== areaKey.current) {
+      areaKey.current = key;
+      const area = lockToArea(L, map, meta.serviceArea);
+      if (area && !items.length) map.fitBounds(area);
+    }
     const ids = new Set(items.map((i) => i.id));
     for (const [id, m] of markers) if (!ids.has(id)) (m.remove(), markers.delete(id));
     for (const o of items) {
@@ -66,9 +78,18 @@ export function OccurrenceMap({ items, selectedId, onSelect, fitKey }: { items: 
 
   useEffect(sync, [items, selectedId, fitKey, meta]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Ao abrir uma ocorrência, o painel de detalhe cobre a direita do mapa. Centralizar no mapa inteiro deixava o
+  // alfinete atrás do painel (ou colado na borda dele); centraliza na parte que continua visível.
   useEffect(() => {
     const o = items.find((i) => i.id === selectedId);
-    if (o && state.current) state.current.map.panTo([o.lat, o.lng], { animate: true });
+    const s = state.current;
+    if (!o || !s) return;
+    const rect = el.current!.getBoundingClientRect();
+    // Painel de detalhe: fixo à direita, 512 px (sm:max-w-lg) a partir de 640 px de tela; abaixo disso ocupa tudo.
+    const covered = window.innerWidth >= 640 ? Math.max(0, rect.right - Math.max(rect.left, window.innerWidth - 512)) : 0;
+    const zoom = Math.max(s.map.getZoom(), 15);
+    const target = s.map.project([o.lat, o.lng], zoom).add([covered / 2, 0]);
+    s.map.setView(s.map.unproject(target, zoom), zoom, { animate: true });
   }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (

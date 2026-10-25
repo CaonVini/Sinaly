@@ -3,9 +3,9 @@ import { File } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import { useEffect, useRef, useState } from "react";
-import { Alert, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { createOccurrenceFieldsSchema } from "@sinaly/shared";
+import { createOccurrenceFieldsSchema, isInsideArea, type ServiceArea } from "@sinaly/shared";
 import { api, ApiError } from "../api";
 import { useData, useNav } from "../app-state";
 import { DEFAULT_CENTER } from "../config";
@@ -39,15 +39,41 @@ export function NewOccurrenceScreen({ at }: { at?: Point }) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [geoBusy, setGeoBusy] = useState(false);
+  const area = meta?.serviceArea ?? null;
 
   useEffect(() => {
     (async () => {
       const perm = await Location.requestForegroundPermissionsAsync();
       if (!perm.granted) return;
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      // GPS fora da área atendida não vira o ponto inicial: o cidadão marca no mapa.
+      if (!isInsideArea(area, pos.coords.latitude, pos.coords.longitude)) return;
       setPoint((p) => p ?? { lat: pos.coords.latitude, lng: pos.coords.longitude });
     })().catch(() => undefined);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Preenche "Bairro" a partir do ponto marcado. A API consulta o serviço de mapas (com limite e cache). */
+  async function fillNeighborhood() {
+    if (!point) {
+      setErrors((e) => ({ ...e, location: "Marque o local no mapa primeiro" }));
+      return;
+    }
+    setGeoBusy(true);
+    try {
+      const r = await api.reverseGeocode(point.lat, point.lng);
+      if (!r.enabled) Alert.alert("Bairro", "A busca automática de bairro está desligada pela prefeitura. Digite o bairro ou um ponto de referência.");
+      else if (!r.neighborhood) Alert.alert("Bairro", "Não encontramos o bairro deste ponto. Digite um ponto de referência.");
+      else {
+        setNeighborhood(r.neighborhood.slice(0, 80));
+        setErrors(({ neighborhood: _n, ...rest }) => rest);
+      }
+    } catch (e) {
+      Alert.alert("Bairro", e instanceof ApiError ? e.message : "Não foi possível buscar o bairro agora.");
+    } finally {
+      setGeoBusy(false);
+    }
+  }
 
   async function pickPhoto(source: "camera" | "library") {
     const perm = source === "camera" ? await ImagePicker.requestCameraPermissionsAsync() : await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -75,6 +101,7 @@ export function NewOccurrenceScreen({ at }: { at?: Point }) {
     const errs: Record<string, string> = {};
     if (!category) errs.category = "Escolha uma categoria";
     if (!point) errs.location = "Marque o local no mapa";
+    else if (!isInsideArea(area, point.lat, point.lng)) errs.location = `O local fica fora da área atendida (${area?.name}).`;
     if (!parsed.success) {
       const fe = parsed.error.flatten().fieldErrors;
       if (fe.description) errs.description = description.trim().length < 10 ? "Descreva com pelo menos 10 caracteres" : "Máximo de 1000 caracteres";
@@ -100,7 +127,10 @@ export function NewOccurrenceScreen({ at }: { at?: Point }) {
       Alert.alert("Relato enviado!", "A prefeitura vai verificar e você recebe um aviso quando o status mudar.");
       pop();
     } catch (e) {
-      if (e instanceof ApiError) {
+      if (e instanceof ApiError && e.details?.location?.[0]) {
+        setErrors((x) => ({ ...x, location: e.details!.location![0]! }));
+        setError(e.message);
+      } else if (e instanceof ApiError) {
         setError(e.status === 429 ? e.message || "Você atingiu o limite de envios. Tente mais tarde." : e.message);
       } else setError("Não foi possível enviar. Tente de novo.");
     } finally {
@@ -108,7 +138,7 @@ export function NewOccurrenceScreen({ at }: { at?: Point }) {
     }
   }
 
-  if (picking) return <LocationPicker initial={point} around={at} onCancel={() => setPicking(false)} onConfirm={(p) => (setPoint(p), setPicking(false))} />;
+  if (picking) return <LocationPicker initial={point} around={at} area={area} onCancel={() => setPicking(false)} onConfirm={(p) => (setPoint(p), setPicking(false))} />;
 
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.bg }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
@@ -162,7 +192,20 @@ export function NewOccurrenceScreen({ at }: { at?: Point }) {
           hint={`${description.trim().length}/1000`}
           error={errors.description}
         />
-        <Field label="Bairro ou ponto de referência" value={neighborhood} onChangeText={setNeighborhood} maxLength={80} placeholder="Opcional" error={errors.neighborhood} />
+        <Field
+          label="Bairro ou ponto de referência"
+          value={neighborhood}
+          onChangeText={setNeighborhood}
+          maxLength={80}
+          placeholder="Opcional"
+          error={errors.neighborhood}
+          hint={point ? "Toque no ícone para preencher pelo ponto marcado." : undefined}
+          accessory={
+            <Pressable onPress={() => void fillNeighborhood()} disabled={geoBusy} style={s.fill} accessibilityRole="button" accessibilityLabel="Preencher bairro pelo ponto marcado no mapa" hitSlop={6}>
+              {geoBusy ? <ActivityIndicator size="small" color={colors.primary} /> : <Icon name="map-marker-radius" size={22} color={point ? colors.primary : colors.muted} />}
+            </Pressable>
+          }
+        />
 
         <Text style={s.section}>Foto</Text>
         {photo ? (
@@ -187,7 +230,7 @@ export function NewOccurrenceScreen({ at }: { at?: Point }) {
 }
 
 /** Tela cheia: o pino fica fixo no centro e o cidadão arrasta o mapa até o ponto certo. */
-function LocationPicker({ initial, around, onCancel, onConfirm }: { initial: Point | null; around?: Point; onCancel: () => void; onConfirm: (p: Point) => void }) {
+function LocationPicker({ initial, around, area, onCancel, onConfirm }: { initial: Point | null; around?: Point; area: ServiceArea | null; onCancel: () => void; onConfirm: (p: Point) => void }) {
   const insets = useSafeAreaInsets();
   const map = useRef<NativeMapHandle>(null);
   const [center, setCenter] = useState<Point | null>(initial);
@@ -200,12 +243,14 @@ function LocationPicker({ initial, around, onCancel, onConfirm }: { initial: Poi
     const perm = await Location.requestForegroundPermissionsAsync();
     if (!perm.granted) return;
     const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-    map.current?.flyTo(pos.coords.latitude, pos.coords.longitude, 18);
+    if (isInsideArea(area, pos.coords.latitude, pos.coords.longitude)) map.current?.flyTo(pos.coords.latitude, pos.coords.longitude, 18);
+    else Alert.alert("Fora da área", `Sua localização fica fora da área atendida (${area?.name}). Arraste o mapa até o local do problema.`);
   }
+  const inside = !!center && isInsideArea(area, center.lat, center.lng);
 
   return (
     <View style={{ flex: 1 }}>
-      <NativeMap ref={map} center={start} onRegion={(_b, c) => setCenter(c)} />
+      <NativeMap ref={map} center={start} area={area} onRegion={(_b, c) => setCenter(c)} />
       <View pointerEvents="none" style={s.pinWrap}>
         <Icon name="map-marker" size={48} color={colors.primary} style={{ marginBottom: 48 }} />
       </View>
@@ -214,14 +259,16 @@ function LocationPicker({ initial, around, onCancel, onConfirm }: { initial: Poi
           <Icon name="close" size={24} color={colors.text} />
         </Pressable>
         <View style={s.tip}>
-          <Text style={{ color: colors.text, fontWeight: "600" }}>Arraste o mapa até o pino ficar sobre o local</Text>
+          <Text style={{ color: inside || !center ? colors.text : colors.danger, fontWeight: "600" }}>
+            {inside || !center ? "Arraste o mapa até o pino ficar sobre o local" : `Fora da área atendida (${area?.name})`}
+          </Text>
         </View>
       </View>
       <View style={[s.pickBottom, { paddingBottom: insets.bottom + space(4) }]}>
         <Pressable onPress={() => void gps().catch(() => undefined)} style={[s.roundBtn, { alignSelf: "flex-end", marginBottom: space(3) }]} accessibilityLabel="Minha localização" accessibilityRole="button">
           <Icon name="crosshairs-gps" size={24} color={colors.primary} />
         </Pressable>
-        <Button title="Confirmar local" onPress={() => center && onConfirm(center)} disabled={!center} icon="check-circle" />
+        <Button title="Confirmar local" onPress={() => center && inside && onConfirm(center)} disabled={!inside} icon="check-circle" />
       </View>
     </View>
   );
@@ -236,6 +283,7 @@ const s = StyleSheet.create({
   cat: { flexDirection: "row", alignItems: "center", gap: space(2), width: "48.5%", backgroundColor: colors.card, borderWidth: 1.5, borderColor: colors.border, borderRadius: radius.md, padding: space(2.5) },
   preview: { width: "100%", aspectRatio: 4 / 3, borderRadius: radius.md, backgroundColor: colors.border },
   remove: { position: "absolute", top: 10, right: 10, backgroundColor: "rgba(0,0,0,0.6)", width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
+  fill: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: 22 },
   hintText: { color: colors.muted, fontSize: 13, marginTop: space(2) },
   pinWrap: { ...StyleSheet.absoluteFill, alignItems: "center", justifyContent: "center" },
   pickTop: { position: "absolute", top: 0, left: 0, right: 0, flexDirection: "row", gap: space(3), paddingHorizontal: space(4), alignItems: "center" },

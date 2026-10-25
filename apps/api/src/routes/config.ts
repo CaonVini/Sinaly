@@ -5,6 +5,8 @@ import {
   categoryCreateSchema,
   categoryPatchSchema,
   orderSchema,
+  placeSearchSchema,
+  serviceAreaPutSchema,
   slugify,
   statusCreateSchema,
   statusPatchSchema,
@@ -12,10 +14,10 @@ import {
 import { db } from "../db/client.js";
 import { isUniqueViolation } from "../db/errors.js";
 import { appSettings, categories, configAudit, occurrences, statuses, users } from "../db/schema.js";
-import type { GeocodeQueue } from "../geocode.js";
+import { searchPlaces, type GeocodeQueue } from "../geocode.js";
 import { HttpError, limitConfig, parse } from "../http.js";
 import { getMeta, invalidateMeta } from "../meta.js";
-import { geocoderSetting, invalidateSettings } from "../settings.js";
+import { geocoderSetting, invalidateSettings, serviceArea } from "../settings.js";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type Entity = "category" | "status";
@@ -74,7 +76,8 @@ export async function configRoutes(app: FastifyInstance, opts: { rateLimit: bool
   // Público: o app e o painel precisam dos nomes/cores/ícones para desenhar o mapa e os filtros.
   app.get("/meta", async (_req, reply) => {
     reply.header("Cache-Control", "public, max-age=10");
-    return (await getMeta()).meta;
+    const [{ meta }, area] = await Promise.all([getMeta(), serviceArea()]);
+    return { ...meta, serviceArea: area };
   });
 
   // ---------- categorias ----------
@@ -232,6 +235,34 @@ export async function configRoutes(app: FastifyInstance, opts: { rateLimit: bool
       if (!enabled) opts.geocode.clear();
     }
     return { enabled };
+  });
+
+  // ---------- área de atuação ----------
+  // O app e o painel travam o mapa nela e a API recusa ocorrências fora (ver occurrences.ts).
+  app.put("/staff/config/service-area", { preHandler: adminOnly, ...rl(30) }, async (req) => {
+    const { area } = parse(serviceAreaPutSchema, req.body);
+    const before = await serviceArea();
+    if (JSON.stringify(before) !== JSON.stringify(area)) {
+      await db.transaction(async (tx) => {
+        await tx.insert(appSettings).values({ key: "service_area", value: { area } }).onConflictDoUpdate({ target: appSettings.key, set: { value: { area }, updatedAt: new Date() } });
+        await tx.insert(configAudit).values({ actorId: req.auth.userId, entity: "setting", entityKey: "service_area", action: "update", changes: { area: { from: before, to: area } }, ip: req.ip });
+      });
+      invalidateSettings();
+    }
+    return { area };
+  });
+
+  // Busca de município pelo nome (só admin, pouco usada: limite baixo para respeitar o serviço público).
+  app.get("/staff/geocode/search", { preHandler: adminOnly, ...limitConfig(opts.rateLimit, 10, "1 minute") }, async (req, reply) => {
+    const { q } = parse(placeSearchSchema, req.query);
+    if (!opts.geocode.enabled) throw new HttpError(409, "Busca indisponível no servidor (GEOCODER_ENABLED). Ajuste a área pelo mapa.");
+    try {
+      return { items: await searchPlaces(q) };
+    } catch (err) {
+      req.log.warn({ err }, "busca de município falhou");
+      // Responde direto: o tratador geral troca qualquer 5xx por "Erro interno" e esta mensagem ajuda o admin.
+      return reply.code(502).send({ error: "Serviço de busca indisponível agora. Tente de novo ou ajuste a área pelo mapa." });
+    }
   });
 
   // Enfileira até 200 ocorrências sem bairro por chamada (as mais novas primeiro).

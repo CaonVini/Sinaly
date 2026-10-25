@@ -194,4 +194,8 @@ export const api = {
   unreadCount: () => authed<{ unreadCount: number }>("/me/notifications", { query: { limit: 1, unread: true } }),
   markRead: (id: string) => authed<void>(`/me/notifications/${encodeURIComponent(id)}/read`, { method: "POST" }),
   markAllRead: () => authed<{ updated: number }>("/me/notifications/read-all", { method: "POST" }),
+  clearNotifications: () => authed<{ removed: number }>("/me/notifications", { method: "DELETE" }),
+
+  /** Bairro do ponto marcado. A consulta passa pela API (que cuida do limite de uso do serviço de mapas), nunca direto do celular. */
+  reverseGeocode: (lat: number, lng: number) => authed<{ enabled: boolean; neighborhood: string | null }>("/geocode/reverse", { query: { lat, lng } }),
 };

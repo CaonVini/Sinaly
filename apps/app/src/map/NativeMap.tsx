@@ -1,7 +1,8 @@
 import * as Location from "expo-location";
 import { forwardRef, memo, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { Platform, StyleSheet, View } from "react-native";
 import MapView, { Marker, type MapPressEvent, type Region } from "react-native-maps";
+import type { ServiceArea } from "@sinaly/shared";
 import type { Bbox } from "../api";
 
 /**
@@ -17,11 +18,19 @@ type Props = {
   onRegion?: (bbox: Bbox, center: { lat: number; lng: number }) => void;
   onMarkerPress?: (id: string) => void;
   onMapPress?: () => void;
+  /** Área de atuação da prefeitura (Configuração no painel): o mapa abre nela e não deixa sair. */
+  area?: ServiceArea | null;
 };
 
 // Aproximação de "zoom" (estilo web) para a extensão da região que o MapView usa.
 const delta = (zoom: number) => 360 / 2 ** zoom;
 const clamp = (v: number, lim: number) => Math.max(-lim, Math.min(lim, v));
+
+/** Região que enquadra a área inteira (com uma folga pequena). */
+export function areaRegion(a: ServiceArea): Region {
+  const [w, so, e, n] = a.bbox;
+  return { latitude: (so + n) / 2, longitude: (w + e) / 2, latitudeDelta: (n - so) * 1.1, longitudeDelta: (e - w) * 1.1 };
+}
 
 const toBbox = (r: Region): Bbox => ({
   minLng: clamp(r.longitude - r.longitudeDelta / 2, 180),
@@ -30,9 +39,14 @@ const toBbox = (r: Region): Bbox => ({
   maxLat: clamp(r.latitude + r.latitudeDelta / 2, 90),
 });
 
-export const NativeMap = forwardRef<NativeMapHandle, Props>(function NativeMap({ center, markers = [], onRegion, onMarkerPress, onMapPress }, ref) {
+export const NativeMap = forwardRef<NativeMapHandle, Props>(function NativeMap({ center, markers = [], onRegion, onMarkerPress, onMapPress, area }, ref) {
   const map = useRef<MapView>(null);
-  const [initialRegion] = useState<Region>(() => ({ latitude: center.lat, longitude: center.lng, latitudeDelta: delta(center.zoom), longitudeDelta: delta(center.zoom) }));
+  // Sem ponto definido (centro padrão), abre já enquadrando a área de atuação.
+  const [initialRegion] = useState<Region>(() =>
+    area && center.zoom < 10 ? areaRegion(area) : { latitude: center.lat, longitude: center.lng, latitudeDelta: delta(center.zoom), longitudeDelta: delta(center.zoom) },
+  );
+  const moved = useRef(false); // já foi levado a um ponto (GPS, local marcado): a área chegando depois não muda a vista
+  const ready = useRef(false);
   // O ponto azul do usuário é desenhado pelo próprio mapa, mas só depois da permissão concedida.
   const [showUser, setShowUser] = useState(false);
   useEffect(() => {
@@ -41,6 +55,7 @@ export const NativeMap = forwardRef<NativeMapHandle, Props>(function NativeMap({
 
   useImperativeHandle(ref, () => ({
     flyTo: (lat, lng, zoom = 16) => {
+      moved.current = true;
       setShowUser(true);
       map.current?.animateToRegion({ latitude: lat, longitude: lng, latitudeDelta: delta(zoom), longitudeDelta: delta(zoom) }, 500);
     },
@@ -55,14 +70,47 @@ export const NativeMap = forwardRef<NativeMapHandle, Props>(function NativeMap({
     return () => clearTimeout(t);
   }, [markers]);
 
+  // Trava na área. No Android (Google Maps) o próprio mapa impede sair (setMapBoundaries); no iOS não existe
+  // essa opção, então ao soltar o mapa fora da área ele volta para a borda (veja onRegionChangeComplete).
+  const areaKey = area ? area.bbox.join(",") : "";
+  const applyArea = () => {
+    if (!area || !map.current || !ready.current) return;
+    const [w, so, e, n] = area.bbox;
+    if (Platform.OS === "android") map.current.setMapBoundaries({ latitude: n, longitude: e }, { latitude: so, longitude: w });
+    if (!moved.current && center.zoom < 10) map.current.animateToRegion(areaRegion(area), 0);
+  };
+  useEffect(applyArea, [areaKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const bounceBack = (r: Region) => {
+    if (!area) return false;
+    const [w, so, e, n] = area.bbox;
+    const lat = Math.min(n, Math.max(so, r.latitude));
+    const lng = Math.min(e, Math.max(w, r.longitude));
+    // Zoom afastado demais (mostrando o estado inteiro) também volta para o enquadramento da área.
+    // Folga de 4x: o mapa ajusta a região à proporção da tela, então o enquadramento da área já passa de 1x.
+    const tooFar = r.latitudeDelta > (n - so) * 4;
+    // Tolerância (~10 m): a região devolvida pelo mapa nunca bate exatamente com a pedida, e sem ela ficaria em laço.
+    if (Math.abs(lat - r.latitude) < 1e-4 && Math.abs(lng - r.longitude) < 1e-4 && !tooFar) return false;
+    const box = areaRegion(area);
+    map.current?.animateToRegion(tooFar ? box : { ...r, latitude: lat, longitude: lng }, 250);
+    return true;
+  };
+
   return (
     <View style={StyleSheet.absoluteFill}>
       <MapView
         ref={map}
         style={StyleSheet.absoluteFill}
         initialRegion={initialRegion}
-        onMapReady={() => onRegion?.(toBbox(initialRegion), center)}
-        onRegionChangeComplete={(r) => onRegion?.(toBbox(r), { lat: r.latitude, lng: r.longitude })}
+        onMapReady={() => {
+          ready.current = true;
+          applyArea();
+          onRegion?.(toBbox(initialRegion), { lat: initialRegion.latitude, lng: initialRegion.longitude });
+        }}
+        onRegionChangeComplete={(r) => {
+          if (bounceBack(r)) return; // a região corrigida dispara outro evento, esse sim repassado
+          onRegion?.(toBbox(r), { lat: r.latitude, lng: r.longitude });
+        }}
         onPress={(e: MapPressEvent) => {
           if (e.nativeEvent.action !== "marker-press") onMapPress?.();
         }}

@@ -54,6 +54,12 @@ export async function notificationRoutes(app: FastifyInstance) {
     return { updated: updated.length };
   });
 
+  // "Limpar avisos": apaga só as notificações do próprio usuário. Não toca no histórico da ocorrência (auditoria).
+  app.delete("/me/notifications", { preHandler: app.authenticate }, async (req) => {
+    const removed = await db.delete(notifications).where(eq(notifications.userId, req.auth.userId)).returning({ id: notifications.id });
+    return { removed: removed.length };
+  });
+
   app.post("/me/notifications/:id/read", { preHandler: app.authenticate }, async (req, reply) => {
     const id = (req.params as { id: string }).id;
     if (!UUID_RE.test(id)) throw new HttpError(404, "Notificação não encontrada");

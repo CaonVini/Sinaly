@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
 import { api, type Notification } from "../api";
 import { useData, useNav } from "../app-state";
 import { colors, radius, space } from "../theme";
@@ -34,15 +34,45 @@ export function NotificationsScreen() {
     refreshUnread();
   }
 
+  /** Apaga todos os avisos (só os do próprio cidadão, na API). Os relatos e o andamento continuam intactos. */
+  function clearAll() {
+    Alert.alert("Limpar avisos?", "Todos os avisos serão apagados. Seus relatos e o andamento deles continuam em \"Meus relatos\".", [
+      { text: "Cancelar", style: "cancel" },
+      {
+        text: "Limpar",
+        style: "destructive",
+        onPress: async () => {
+          const before = list.items;
+          list.setItems([]); // otimista
+          try {
+            await api.clearNotifications();
+          } catch {
+            list.setItems(before);
+            Alert.alert("Avisos", "Não foi possível limpar agora. Tente de novo.");
+          }
+          refreshUnread();
+        },
+      },
+    ]);
+  }
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <Header
         title="Avisos"
         right={
-          unread > 0 ? (
-            <Pressable onPress={readAll} hitSlop={10} accessibilityRole="button">
-              <Text style={{ color: colors.primary, fontWeight: "700" }}>Marcar todos como lidos</Text>
-            </Pressable>
+          list.items.length > 0 ? (
+            <View style={{ flexDirection: "row", gap: space(1), alignItems: "center" }}>
+              {unread > 0 ? (
+                <Pressable onPress={readAll} hitSlop={6} style={s.action} accessibilityRole="button" accessibilityLabel="Marcar todos como lidos">
+                  <Icon name="check-all" size={22} color={colors.primary} />
+                </Pressable>
+              ) : null}
+              <Pressable onPress={clearAll} hitSlop={6} style={s.clear} accessibilityRole="button" accessibilityLabel="Limpar avisos">
+                <Icon name="trash-can-outline" size={18} color={colors.danger} />
+                <Text style={{ color: colors.danger, fontWeight: "700" }}>Limpar</Text>
+              </Pressable>
+            </View>
           ) : undefined
         }
       />
@@ -82,6 +112,8 @@ export function NotificationsScreen() {
 }
 
 const s = StyleSheet.create({
+  action: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
+  clear: { flexDirection: "row", alignItems: "center", gap: 4, height: 40, paddingHorizontal: space(2.5), borderRadius: radius.pill, backgroundColor: colors.dangerSoft },
   row: { flexDirection: "row", gap: space(3), backgroundColor: colors.card, borderRadius: radius.lg, padding: space(3.5), borderWidth: 1, borderColor: colors.border },
   unread: { borderColor: colors.primary, backgroundColor: "#fbfcff" },
   icon: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },

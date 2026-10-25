@@ -11,6 +11,7 @@ const fake = createServer((req, res) => {
   seen.push({ url: req.url ?? "", ua: req.headers["user-agent"] });
   if (mode === "forbidden") return void res.writeHead(403).end("blocked");
   res.setHeader("content-type", "application/json");
+  if (req.url?.startsWith("/search")) return void res.end(JSON.stringify([{ name: "Concórdia", boundingbox: ["-27.4", "-27.0", "-52.3", "-51.8"], address: { state: "Santa Catarina", country: "Brasil" } }, { name: "x", boundingbox: ["a"] }]));
   res.end(JSON.stringify(mode === "empty" ? { error: "Unable to geocode" } : { address: { road: "Rua X", suburb: "Bela Vista", city: "São Paulo" } }));
 });
 await new Promise<void>((r) => fake.listen(0, "127.0.0.1", r));
@@ -67,6 +68,47 @@ async function createOcc(token: string) {
   return res.json().id as string;
 }
 const status = async (t: string) => (await app.inject({ method: "GET", url: "/staff/geocode/status", headers: { authorization: `Bearer ${t}` } })).json();
+
+describe("bairro do ponto marcado (botão do app)", () => {
+  async function citizenToken() {
+    const res = await app.inject({ method: "POST", url: "/auth/register", payload: { email: "c@example.com", password: "senha-do-cidadao" } });
+    return res.json().accessToken as string;
+  }
+  const lookup = (t: string | null, qs: string) => app.inject({ method: "GET", url: `/geocode/reverse?${qs}`, headers: t ? { authorization: `Bearer ${t}` } : {} });
+
+  it("exige login, valida o ponto, consulta via API e guarda em cache", async () => {
+    const t = await citizenToken();
+    expect((await lookup(null, "lat=-23.5&lng=-46.6")).statusCode).toBe(401);
+    expect((await lookup(t, "lat=91&lng=0")).statusCode).toBe(400);
+    expect((await lookup(t, "lat=-23.56141&lng=-46.65591")).json()).toEqual({ enabled: true, neighborhood: "Bela Vista" });
+    expect((await lookup(t, "lat=-23.56142&lng=-46.65592")).json()).toEqual({ enabled: true, neighborhood: "Bela Vista" }); // mesmo ponto arredondado
+    expect(seen.filter((x) => x.url.startsWith("/reverse"))).toHaveLength(1);
+  });
+
+  it("serviço fora do ar ou bairro automático desligado: devolve null sem erro", async () => {
+    const t = await citizenToken();
+    mode = "forbidden";
+    expect((await lookup(t, "lat=-10.1&lng=-40.1")).json()).toEqual({ enabled: true, neighborhood: null });
+    await pool.query("insert into app_settings (key, value) values ('geocoder_enabled', 'false'::jsonb)");
+    invalidateSettings();
+    const before = seen.length;
+    expect((await lookup(t, "lat=-11.1&lng=-41.1")).json()).toEqual({ enabled: false, neighborhood: null });
+    expect(seen.length).toBe(before);
+  });
+});
+
+describe("busca de município (área de atuação)", () => {
+  it("converte a caixa do Nominatim para [oeste, sul, leste, norte] e descarta resultados inválidos", async () => {
+    const t = await gestor(); // é admin
+    const res = await app.inject({ method: "GET", url: "/staff/geocode/search?q=Concórdia", headers: { authorization: `Bearer ${t}` } });
+    expect(res.json()).toEqual({ items: [{ name: "Concórdia", detail: "Santa Catarina, Brasil", bbox: [-52.3, -27.4, -51.8, -27.0] }] });
+    const s = seen.find((x) => x.url.startsWith("/search"))!;
+    expect(s.url).toContain("countrycodes=br");
+    expect(s.ua).toBe("Sinaly-Teste/1.0 (teste@example.com)");
+    mode = "forbidden";
+    expect((await app.inject({ method: "GET", url: "/staff/geocode/search?q=Concórdia", headers: { authorization: `Bearer ${t}` } })).statusCode).toBe(502);
+  });
+});
 
 describe("interruptor do bairro automático", () => {
   const put = (t: string, enabled: unknown) => app.inject({ method: "PUT", url: "/staff/config/geocoder", headers: { authorization: `Bearer ${t}` }, payload: { enabled } as object });
