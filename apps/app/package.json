@@ -1,24 +1,33 @@
 {
   "name": "@sinaly/app",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
+    "android": "expo start --android",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@expo/vector-icons": "^15.0.2",
     "@sinaly/shared": "workspace:*",
-    "expo": "~54.0.0",
-    "expo-status-bar": "~3.0.0",
-    "react": "19.1.0",
-    "react-dom": "19.1.0",
-    "react-native": "0.81.4",
-    "react-native-web": "^0.21.0"
+    "expo": "~58.0.19",
+    "expo-constants": "~58.0.13",
+    "expo-image-manipulator": "~58.0.15",
+    "expo-image-picker": "~58.0.10",
+    "expo-location": "~58.0.19",
+    "expo-secure-store": "~58.0.2",
+    "expo-status-bar": "~58.0.4",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-native": "0.88.0",
+    "react-native-safe-area-context": "~5.10.1",
+    "react-native-web": "~0.21.4",
+    "react-native-webview": "14.0.1"
   },
   "devDependencies": {
-    "@types/react": "~19.1.0",
-    "typescript": "^5.6.0"
+    "@types/react": "~19.2.0",
+    "typescript": "~5.9.2"
   }
 }
