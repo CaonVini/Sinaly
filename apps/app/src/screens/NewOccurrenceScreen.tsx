@@ -1,4 +1,5 @@
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
+import { File } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import { useEffect, useRef, useState } from "react";
@@ -88,8 +89,9 @@ export function NewOccurrenceScreen({ at }: { at?: Point }) {
     if (parsed.data.neighborhood) form.append("neighborhood", parsed.data.neighborhood);
     form.append("lat", String(parsed.data.lat));
     form.append("lng", String(parsed.data.lng));
-    // React Native envia o arquivo a partir do caminho local; o tipo do objeto não existe no DOM do TS.
-    if (photo) form.append("photo", { uri: photo, name: "foto.jpg", type: "image/jpeg" } as unknown as Blob);
+    // O fetch do Expo (padrão desde o SDK 52+) não aceita o antigo `{ uri, name, type }` do React Native:
+    // o arquivo vai como File do expo-file-system, que ele sabe ler. O TS do DOM não conhece esse tipo.
+    if (photo) form.append("photo", new File(photo) as unknown as Blob);
 
     setSending(true);
     try {

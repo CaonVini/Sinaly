@@ -130,7 +130,11 @@ async function raw<T>(path: string, opts: Opts = {}, auth = false): Promise<T> {
     });
   } catch (e) {
     if (opts.signal?.aborted) throw e; // cancelado por quem chamou: não é erro de rede
-    throw new ApiError(0, ctrl.signal.aborted ? "A API demorou demais para responder." : `Sem conexão com a API (${API_URL}).`);
+    if (ctrl.signal.aborted) throw new ApiError(0, "A API demorou demais para responder.");
+    // Falha de rede vem como TypeError; qualquer outra coisa (ex.: corpo que o fetch não sabe montar) é bug do app,
+    // e mostrar "sem conexão" nesse caso esconderia a causa.
+    if (e instanceof TypeError) throw new ApiError(0, `Sem conexão com a API (${API_URL}).`);
+    throw new ApiError(-1, `Falha ao preparar a requisição: ${e instanceof Error ? e.message : String(e)}`);
   } finally {
     clearTimeout(timer);
     opts.signal?.removeEventListener("abort", onAbort);
