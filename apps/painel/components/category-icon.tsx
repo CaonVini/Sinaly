@@ -1,10 +1,12 @@
+"use client";
 import type { Category } from "@sinaly/shared";
-import { Droplet, Lightbulb, Shield, Signpost, Wrench, type LucideProps } from "lucide-react";
+import type { LucideProps } from "lucide-react";
+import { iconFor } from "@/lib/icons";
+import { useMeta } from "@/lib/meta";
 
-const ICONS = { seguranca: Shield, infraestrutura: Wrench, sinalizacao: Signpost, saneamento: Droplet, iluminacao: Lightbulb } as const;
-
-/** Mesmos ícones do alfinete do mapa. */
+/** Mesmo ícone do alfinete do mapa (configurável pela prefeitura). */
 export function CategoryIcon({ category, ...props }: { category: Category } & LucideProps) {
-  const Icon = ICONS[category];
+  const { category: get } = useMeta();
+  const Icon = iconFor(get(category)?.icon);
   return <Icon {...props} />;
 }

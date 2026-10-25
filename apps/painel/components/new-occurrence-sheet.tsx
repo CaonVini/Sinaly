@@ -1,5 +1,5 @@
 "use client";
-import { CATEGORIES, CATEGORY_LABELS, STAFF_CREATE_STATUSES, STATUS_LABELS, type Category } from "@sinaly/shared";
+import type { Category } from "@sinaly/shared";
 import { Loader2, MapPin } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useState, type FormEvent } from "react";
@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, type Occurrence } from "@/lib/client";
+import { useMeta } from "@/lib/meta";
 
 const LocationPicker = dynamic(() => import("@/components/location-picker").then((m) => m.LocationPicker), {
   ssr: false,
@@ -28,8 +29,12 @@ export function NewOccurrenceSheet({ open, onClose, onCreated, center }: { open:
 }
 
 function Form({ onCreated, center }: { onCreated: (o: Occurrence) => void; center?: Point | null }) {
-  const [category, setCategory] = useState<Category>("infraestrutura");
-  const [status, setStatus] = useState<(typeof STAFF_CREATE_STATUSES)[number]>("em_analise");
+  const { meta } = useMeta();
+  // Só categorias ativas; status de entrada: "não verificado" ou em andamento (resolvido/recusado só por transição).
+  const categories = meta.categories.filter((c) => c.active);
+  const entryStatuses = meta.statuses.filter((s) => s.active && (s.kind === "initial" || s.kind === "active"));
+  const [category, setCategory] = useState<Category>(() => categories.find((c) => c.slug === "infraestrutura")?.slug ?? categories[0]?.slug ?? "");
+  const [status, setStatus] = useState<string>("em_analise");
   const [point, setPoint] = useState<Point | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,14 +82,14 @@ function Form({ onCreated, center }: { onCreated: (o: Occurrence) => void; cente
             <Label>Categoria</Label>
             <Select value={category} onValueChange={(v) => setCategory(v as Category)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>{CATEGORIES.map((c) => <SelectItem key={c} value={c}>{CATEGORY_LABELS[c]}</SelectItem>)}</SelectContent>
+              <SelectContent>{categories.map((c) => <SelectItem key={c.slug} value={c.slug}>{c.name}</SelectItem>)}</SelectContent>
             </Select>
           </div>
           <div className="space-y-2">
             <Label>Status inicial</Label>
-            <Select value={status} onValueChange={(v) => setStatus(v as typeof status)}>
+            <Select value={status} onValueChange={setStatus}>
               <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>{STAFF_CREATE_STATUSES.map((s) => <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>)}</SelectContent>
+              <SelectContent>{entryStatuses.map((s) => <SelectItem key={s.slug} value={s.slug}>{s.name}</SelectItem>)}</SelectContent>
             </Select>
           </div>
         </div>

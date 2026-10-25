@@ -9,6 +9,10 @@ const schema = z.object({
   // Pasta das fotos (volume Docker em produção). Troque storage.ts por S3/R2 quando escalar.
   UPLOAD_DIR: z.string().default("./data/uploads"),
   TRUST_PROXY: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
+  // Bairro automático (geocodificação reversa). Desligado por padrão; o compose liga. Em produção use geocoder próprio/pago.
+  GEOCODER_ENABLED: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
+  GEOCODER_URL: z.string().url().default("https://nominatim.openstreetmap.org"),
+  GEOCODER_USER_AGENT: z.string().min(5).default("Sinaly-MVP/0.1 (prefeitura)"),
   // Segredos: gere com `openssl rand -base64 48` (JWT/pepper) e `openssl rand -base64 32` (chave).
   JWT_SECRET: z.string().min(32),
   CPF_HASH_PEPPER: z.string().min(32),

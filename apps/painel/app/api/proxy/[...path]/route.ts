@@ -6,8 +6,18 @@ import { apiFetch, clearSession, deny, sameOrigin } from "@/lib/server";
  * A autorização de verdade (papel de funcionário) continua sendo da API.
  */
 const UUID = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
+const SLUG = "[a-z0-9_]{2,40}";
 const ROUTES: { method: string; re: RegExp }[] = [
   { method: "GET", re: /^me$/ },
+  { method: "GET", re: /^meta$/ },
+  { method: "GET", re: /^staff\/reports$/ },
+  // Configuração (a API exige gestor; aqui só limitamos às rotas conhecidas).
+  { method: "GET", re: /^staff\/config\/audit$/ },
+  { method: "POST", re: /^staff\/config\/(categories|statuses)$/ },
+  { method: "PATCH", re: new RegExp(`^staff/config/(categories|statuses)/${SLUG}$`) },
+  { method: "DELETE", re: new RegExp(`^staff/config/(categories|statuses)/${SLUG}$`) },
+  { method: "PUT", re: /^staff\/config\/(categories|statuses)-order$/ },
+  { method: "POST", re: /^staff\/geocode\/backfill$/ },
   { method: "GET", re: /^staff\/stats$/ },
   { method: "GET", re: /^staff\/activity$/ },
   { method: "GET", re: /^staff\/occurrences$/ },
@@ -29,8 +39,10 @@ async function handle(req: Request, ctx: { params: Promise<{ path: string[] }> }
   const search = new URL(req.url).search;
   let body: BodyInit | undefined;
   let fwdHeaders: Record<string, string> | undefined;
-  if (req.method === "PATCH") {
+  const isConfig = joined.startsWith("staff/config/") || joined === "staff/geocode/backfill";
+  if (req.method === "PATCH" || req.method === "PUT" || (req.method === "POST" && isConfig)) {
     body = await req.text();
+    if (body.length > 20_000) return deny(413, "Corpo grande demais");
     fwdHeaders = { "content-type": "application/json" };
   } else if (req.method === "POST") {
     // Cadastro com foto (multipart). Limita antes de ler para não bufferizar corpo gigante; a API valida o resto.
@@ -57,3 +69,5 @@ async function handle(req: Request, ctx: { params: Promise<{ path: string[] }> }
 export const GET = handle;
 export const POST = handle;
 export const PATCH = handle;
+export const PUT = handle;
+export const DELETE = handle;

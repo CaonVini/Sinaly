@@ -1,5 +1,5 @@
 "use client";
-import { ALLOWED_TRANSITIONS, CATEGORIES, CATEGORY_LABELS, SOURCE_LABELS, STATUS_LABELS, type Category, type Status } from "@sinaly/shared";
+import { SOURCE_LABELS, type Status } from "@sinaly/shared";
 import { ExternalLink, ImageOff, Loader2, Pencil, Phone } from "lucide-react";
 import { useState } from "react";
 import { StatusBadge } from "@/components/status-badge";
@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { api, type AuditEntry, type Occurrence, useApi } from "@/lib/client";
+import { useMeta } from "@/lib/meta";
 import { cn, fmtDateTime } from "@/lib/utils";
 
 const ACTION: Record<string, { label: string; variant: "default" | "outline" | "destructive" }> = {
@@ -26,11 +27,12 @@ const ACTION: Record<string, { label: string; variant: "default" | "outline" | "
 
 const FIELD: Record<string, string> = { neighborhood: "Bairro", status: "Status", category: "Categoria", description: "Descrição", location: "Localização", note: "Observação", photo: "Foto", source: "Origem", reporterContact: "Contato de quem relatou" };
 
-function show(field: string, v: unknown): string {
+type Names = { statusName: (s: string) => string; categoryName: (c: string) => string };
+function show(field: string, v: unknown, n: Names): string {
   if (v === null || v === undefined) return "—";
-  if (field === "status") return STATUS_LABELS[v as Status] ?? String(v);
+  if (field === "status") return n.statusName(String(v));
   if (field === "source") return SOURCE_LABELS[v as keyof typeof SOURCE_LABELS] ?? String(v);
-  if (field === "category") return CATEGORY_LABELS[v as Category] ?? String(v);
+  if (field === "category") return n.categoryName(String(v));
   if (field === "location" && typeof v === "object") {
     const p = v as { lat: number; lng: number };
     return `${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`;
@@ -57,6 +59,7 @@ function Detail({ id, onChanged }: { id: string; onChanged: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [photoOk, setPhotoOk] = useState(true);
   const [hood, setHood] = useState<string | null>(null);
+  const { meta, statusName, categoryName, targets, status: statusOf } = useMeta();
   const o = occ.data;
 
   async function save(body: Record<string, unknown>) {
@@ -77,7 +80,7 @@ function Detail({ id, onChanged }: { id: string; onChanged: () => void }) {
   }
 
   function transition(to: Status) {
-    if (to === "recusado" && !note.trim()) {
+    if (statusOf(to)?.kind === "rejected" && !note.trim()) {
       setError("Informe o motivo da recusa na observação.");
       return;
     }
@@ -92,11 +95,13 @@ function Detail({ id, onChanged }: { id: string; onChanged: () => void }) {
     </div>
   );
 
-  const next = ALLOWED_TRANSITIONS[o.status];
+  const names: Names = { statusName, categoryName };
+  const next = targets(o.status);
+  const needsReason = next.some((t) => t.kind === "rejected");
   return (
     <>
       <header className="space-y-2 border-b p-5 pr-12">
-        <SheetTitle>{CATEGORY_LABELS[o.category]}</SheetTitle>
+        <SheetTitle>{categoryName(o.category)}</SheetTitle>
         <SheetDescription className="text-xs text-muted-foreground">
           Registrada em {fmtDateTime(o.createdAt)}{o.authorName ? ` por ${o.authorName}` : ""}
         </SheetDescription>
@@ -148,7 +153,7 @@ function Detail({ id, onChanged }: { id: string; onChanged: () => void }) {
             <Label>Categoria</Label>
             <Select value={o.category} onValueChange={(v) => save({ category: v })} disabled={busy}>
               <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>{CATEGORIES.map((c) => <SelectItem key={c} value={c}>{CATEGORY_LABELS[c]}</SelectItem>)}</SelectContent>
+              <SelectContent>{meta.categories.filter((c) => c.active || c.slug === o.category).map((c) => <SelectItem key={c.slug} value={c.slug}>{c.name}</SelectItem>)}</SelectContent>
             </Select>
           </div>
           <div className="space-y-2">
@@ -168,11 +173,12 @@ function Detail({ id, onChanged }: { id: string; onChanged: () => void }) {
         </section>
 
         <section className="space-y-3 rounded-lg border bg-muted/40 p-4">
-          <Label htmlFor="note">Observação {next.includes("recusado") && <span className="font-normal text-muted-foreground">(obrigatória para recusar)</span>}</Label>
+          <Label htmlFor="note">Observação {needsReason && <span className="font-normal text-muted-foreground">(obrigatória para recusar)</span>}</Label>
           <Textarea id="note" value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} placeholder="Opcional. O morador recebe esta observação junto com a mudança de status." className="min-h-16 bg-card" />
           <div className="flex flex-wrap gap-2">
-            {next.map((to) => {
-              const a = ACTION[`${o.status}>${to}`] ?? { label: STATUS_LABELS[to], variant: "outline" as const };
+            {next.map((t) => {
+              const to = t.slug;
+              const a = ACTION[`${o.status}>${to}`] ?? { label: t.kind === "rejected" ? "Recusar" : `Mover para ${t.name}`, variant: t.kind === "rejected" ? ("destructive" as const) : ("outline" as const) };
               return <Button key={to} variant={a.variant} size="sm" disabled={busy} onClick={() => transition(to)}>{busy && <Loader2 className="animate-spin" />}{a.label}</Button>;
             })}
           </div>
@@ -189,7 +195,7 @@ function Detail({ id, onChanged }: { id: string; onChanged: () => void }) {
                   <p className="font-medium">{e.actorName ?? "Servidor"} <span className="font-normal text-muted-foreground">· {fmtDateTime(e.at)}</span></p>
                   <ul className="mt-0.5 space-y-0.5 text-muted-foreground">
                     {e.action === "create" || Object.keys(e.changes).length === 0 ? <li>Registro criado</li> : Object.entries(e.changes).map(([f, c]) => (
-                      <li key={f}>{FIELD[f] ?? f}: {f === "description" || f === "note" ? show(f, c.to) : <>{show(f, c.from)} → <span className="text-foreground">{show(f, c.to)}</span></>}</li>
+                      <li key={f}>{FIELD[f] ?? f}: {f === "description" || f === "note" ? show(f, c.to, names) : <>{show(f, c.from, names)} → <span className="text-foreground">{show(f, c.to, names)}</span></>}</li>
                     ))}
                   </ul>
                 </li>

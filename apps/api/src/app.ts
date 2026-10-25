@@ -10,8 +10,12 @@ import { HttpError } from "./http.js";
 import { meRoutes } from "./routes/me.js";
 import { notificationRoutes } from "./routes/notifications.js";
 import { occurrenceRoutes } from "./routes/occurrences.js";
+import { configRoutes } from "./routes/config.js";
+import { reportRoutes } from "./routes/reports.js";
+import { createGeocodeQueue, nominatim, type ReverseGeocoder } from "./geocode.js";
 
-export async function buildApp({ rateLimit: limit = true }: { rateLimit?: boolean } = {}) {
+/** `geocoder`: injetável nos testes. Por padrão usa o Nominatim se GEOCODER_ENABLED=true. */
+export async function buildApp({ rateLimit: limit = true, geocoder }: { rateLimit?: boolean; geocoder?: ReverseGeocoder | null } = {}) {
   const app = Fastify({
     logger: { level: env.NODE_ENV === "production" ? "info" : "debug" },
     trustProxy: env.TRUST_PROXY,
@@ -37,7 +41,12 @@ export async function buildApp({ rateLimit: limit = true }: { rateLimit?: boolea
   await registerAuth(app);
   await authRoutes(app, { rateLimit: limit });
   await meRoutes(app);
-  await occurrenceRoutes(app, { rateLimit: limit });
+  const geocode = createGeocodeQueue(geocoder !== undefined ? geocoder : env.GEOCODER_ENABLED ? nominatim : null, app.log);
+  app.decorate("geocode", geocode);
+  app.addHook("onClose", async () => geocode.idle());
+  await occurrenceRoutes(app, { rateLimit: limit, geocode });
+  await configRoutes(app, { rateLimit: limit, geocode });
+  await reportRoutes(app);
   await notificationRoutes(app);
 
   // Nunca devolve detalhe interno: erros do banco (DrizzleQueryError) carregam o SQL e os parâmetros.

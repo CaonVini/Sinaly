@@ -63,6 +63,9 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       CPF_HASH_PEPPER: ${CPF_HASH_PEPPER}
       DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY}
+      GEOCODER_ENABLED: ${GEOCODER_ENABLED:-true}
+      GEOCODER_URL: ${GEOCODER_URL:-https://nominatim.openstreetmap.org}
+      GEOCODER_USER_AGENT: ${GEOCODER_USER_AGENT:-Sinaly-MVP/0.1 (prefeitura)}
     depends_on:
       migrate:
         condition: service_completed_successfully

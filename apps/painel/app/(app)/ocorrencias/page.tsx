@@ -1,5 +1,5 @@
 "use client";
-import { CATEGORIES, CATEGORY_LABELS, STATUSES, STATUS_LABELS, type Category, type Status } from "@sinaly/shared";
+import type { Category, Status } from "@sinaly/shared";
 import { ChevronRight, Clock, ImageOff, Loader2, MapPin, MapPinned, Plus } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, type Occurrence, type Stats, useApi } from "@/lib/client";
+import { useMeta } from "@/lib/meta";
 import { cn, timeAgo, titleOf } from "@/lib/utils";
 
 const OccurrenceMap = dynamic(() => import("@/components/occurrence-map").then((m) => m.OccurrenceMap), {
@@ -21,12 +22,14 @@ const OccurrenceMap = dynamic(() => import("@/components/occurrence-map").then((
 
 type Page = { items: Occurrence[]; nextCursor: string | null; total: number };
 const ALL = "all";
+const SLUG = /^[a-z0-9_]{2,40}$/;
 
 function Content() {
   const router = useRouter();
   const sp = useSearchParams();
-  const status = (STATUSES as readonly string[]).includes(sp.get("status") ?? "") ? (sp.get("status") as Status) : null;
-  const category = (CATEGORIES as readonly string[]).includes(sp.get("category") ?? "") ? (sp.get("category") as Category) : null;
+  const { meta, categoryName } = useMeta();
+  const status = SLUG.test(sp.get("status") ?? "") ? (sp.get("status") as Status) : null;
+  const category = SLUG.test(sp.get("category") ?? "") ? (sp.get("category") as Category) : null;
   const order = sp.get("order") === "asc" ? "asc" : "desc";
   const selected = sp.get("id");
 
@@ -82,7 +85,7 @@ function Content() {
   );
 
   const count = (s: Status) => stats.data?.byStatus[s];
-  const total = stats.data ? STATUSES.reduce((a, k) => a + (stats.data!.byStatus[k] ?? 0), 0) : undefined;
+  const total = stats.data ? Object.values(stats.data.byStatus).reduce((a, n) => a + n, 0) : undefined;
 
   return (
     <div className="flex h-dvh flex-col">
@@ -96,14 +99,14 @@ function Content() {
               <SelectTrigger aria-label="Categoria"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value={ALL}>Todas as categorias</SelectItem>
-                {CATEGORIES.map((c) => <SelectItem key={c} value={c}>{CATEGORY_LABELS[c]}</SelectItem>)}
+                {meta.categories.map((c) => <SelectItem key={c.slug} value={c.slug}>{c.name}{c.active ? "" : " (inativa)"}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
           </div>
         </div>
         <div className="flex flex-wrap gap-1" role="tablist" aria-label="Filtrar por status">
-          {[{ key: null, label: "Todas", n: total }, ...STATUSES.map((s) => ({ key: s as Status | null, label: STATUS_LABELS[s], n: count(s) }))].map((t) => (
+          {[{ key: null, label: "Todas", n: total }, ...meta.statuses.filter((s) => s.active || (stats.data?.byStatus[s.slug] ?? 0) > 0).map((s) => ({ key: s.slug as Status | null, label: s.name, n: count(s.slug) }))].map((t) => (
             <button
               key={t.key ?? "all"}
               role="tab"
@@ -167,7 +170,7 @@ function Content() {
                         <span className="line-clamp-2 text-[0.95rem] leading-snug font-semibold">{titleOf(o.description)}</span>
                         <ChevronRight className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                       </span>
-                      <span className="flex items-center gap-1.5 text-sm text-muted-foreground"><CategoryIcon category={o.category} className="size-3.5 shrink-0" /> {CATEGORY_LABELS[o.category]}</span>
+                      <span className="flex items-center gap-1.5 text-sm text-muted-foreground"><CategoryIcon category={o.category} className="size-3.5 shrink-0" /> {categoryName(o.category)}</span>
                       <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
                         <MapPin className="size-3.5 shrink-0" />
                         <span className="truncate">{o.neighborhood ?? "Bairro não informado"}</span>

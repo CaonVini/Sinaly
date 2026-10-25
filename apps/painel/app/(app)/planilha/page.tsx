@@ -1,5 +1,5 @@
 "use client";
-import { CATEGORIES, CATEGORY_LABELS, SOURCE_LABELS, STATUSES, STATUS_LABELS, type Category, type Status } from "@sinaly/shared";
+import { SOURCE_LABELS, type Category, type Status } from "@sinaly/shared";
 import { Download, ImageIcon, Loader2, Phone, Plus, Search } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
@@ -12,18 +12,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, type Occurrence } from "@/lib/client";
 import { download, toCsv } from "@/lib/csv";
+import { useMeta } from "@/lib/meta";
 import { fmtDateTime } from "@/lib/utils";
 
 type Page = { items: Occurrence[]; nextCursor: string | null };
 const ALL = "all";
 const EXPORT_CAP = 20000;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const SLUG = /^[a-z0-9_]{2,40}$/;
 
 function Content() {
   const router = useRouter();
   const sp = useSearchParams();
-  const status = (STATUSES as readonly string[]).includes(sp.get("status") ?? "") ? (sp.get("status") as Status) : null;
-  const category = (CATEGORIES as readonly string[]).includes(sp.get("category") ?? "") ? (sp.get("category") as Category) : null;
+  const { meta, categoryName, statusName } = useMeta();
+  const status = SLUG.test(sp.get("status") ?? "") ? (sp.get("status") as Status) : null;
+  const category = SLUG.test(sp.get("category") ?? "") ? (sp.get("category") as Category) : null;
   const from = DATE.test(sp.get("from") ?? "") ? sp.get("from")! : "";
   const to = DATE.test(sp.get("to") ?? "") ? sp.get("to")! : "";
   const selected = sp.get("id");
@@ -86,7 +89,7 @@ function Content() {
         cur = p.nextCursor;
         setExporting(all.length);
       } while (cur && all.length < EXPORT_CAP);
-      download(`sinaly-ocorrencias-${new Date().toISOString().slice(0, 10)}.csv`, toCsv(all));
+      download(`sinaly-ocorrencias-${new Date().toISOString().slice(0, 10)}.csv`, toCsv(all, { category: categoryName, status: statusName }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Falha ao exportar");
     } finally {
@@ -136,7 +139,7 @@ function Content() {
               <SelectTrigger aria-label="Status"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value={ALL}>Todos os status</SelectItem>
-                {STATUSES.map((s) => <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>)}
+                {meta.statuses.map((s) => <SelectItem key={s.slug} value={s.slug}>{s.name}{s.active ? "" : " (inativo)"}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -145,7 +148,7 @@ function Content() {
               <SelectTrigger aria-label="Categoria"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value={ALL}>Todas as categorias</SelectItem>
-                {CATEGORIES.map((c) => <SelectItem key={c} value={c}>{CATEGORY_LABELS[c]}</SelectItem>)}
+                {meta.categories.map((c) => <SelectItem key={c.slug} value={c.slug}>{c.name}{c.active ? "" : " (inativa)"}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -172,7 +175,7 @@ function Content() {
                   <button className="font-mono underline-offset-2 hover:underline" onClick={(e) => (e.stopPropagation(), setParam("id", o.id))}>{o.id.slice(0, 8).toUpperCase()}</button>
                 </td>
                 <td className="px-4 py-2.5 whitespace-nowrap tabular-nums">{fmtDateTime(o.createdAt)}</td>
-                <td className="px-4 py-2.5 whitespace-nowrap">{CATEGORY_LABELS[o.category]}</td>
+                <td className="px-4 py-2.5 whitespace-nowrap">{categoryName(o.category)}</td>
                 <td className="px-4 py-2.5 whitespace-nowrap">{o.neighborhood ?? "—"}</td>
                 <td className="px-4 py-2.5"><StatusBadge status={o.status} /></td>
                 <td className="max-w-md px-4 py-2.5"><span className="line-clamp-2">{o.description}</span></td>

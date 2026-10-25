@@ -1,12 +1,9 @@
 import multipart from "@fastify/multipart";
-import { and, asc, count, desc, eq, gt, inArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, or, sql, type SQL } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
-  ALLOWED_TRANSITIONS,
-  CATEGORY_LABELS,
-  PUBLIC_STATUSES,
   RESOLVED_VISIBLE_DAYS,
-  STATUS_LABELS,
+  canTransition,
   createOccurrenceFieldsSchema,
   listQuerySchema,
   mapQuerySchema,
@@ -16,12 +13,15 @@ import {
   type Category,
   type Source,
   type Status,
+  type StatusMeta,
 } from "@sinaly/shared";
 import { discardPhoto, ImageError, storePhoto } from "../images.js";
 import type { Auth } from "../auth.js";
 import { db } from "../db/client.js";
-import { citizenProfiles, notifications, occurrenceAudit, occurrences, statusHistory, users } from "../db/schema.js";
+import { citizenProfiles, notifications, occurrenceAudit, occurrences, statusHistory, statuses, users } from "../db/schema.js";
+import type { GeocodeQueue } from "../geocode.js";
 import { decodeCursor, encodeCursor, HttpError, limitConfig, parse, UUID_RE } from "../http.js";
+import { getMeta } from "../meta.js";
 import { decrypt, encrypt } from "../security/crypto.js";
 import { openObject, thumbKey } from "../storage.js";
 
@@ -75,17 +75,25 @@ const dto = (r: Row) => ({
 });
 
 const isStaff = (a: Auth | null): boolean => !!a && a.role !== "cidadao";
-const isPublic = (status: Status) => PUBLIC_STATUSES.includes(status);
+// Quem decide se um status é público é o TIPO dele (active/resolved), não o nome: status criados pela prefeitura valem igual.
+type StatusMap = Map<string, StatusMeta>;
+const isPublic = (st: StatusMap, status: Status) => {
+  const k = st.get(status)?.kind;
+  return k === "active" || k === "resolved";
+};
 // Cidadão só vê o que é público ou o que é seu; funcionário vê tudo.
-const canSee = (a: Auth | null, row: { status: Status; authorId: string }) =>
-  isPublic(row.status) || isStaff(a) || (!!a && a.userId === row.authorId);
+const canSee = (st: StatusMap, a: Auth | null, row: { status: Status; authorId: string }) =>
+  isPublic(st, row.status) || isStaff(a) || (!!a && a.userId === row.authorId);
 
-/** Visível no mapa: em análise/atendimento sempre; resolvido só nos primeiros N dias (ou com o filtro "resolvidos"). */
+const slugsOfKind = (...kinds: StatusMeta["kind"][]) =>
+  sql`(select ${statuses.slug} from ${statuses} where ${statuses.kind} in (${sql.join(kinds.map((k) => sql`${k}`), sql`, `)}))`;
+
+/** Visível no mapa: status "em andamento" sempre; resolvido só nos primeiros N dias (ou com o filtro "resolvidos"). */
 function publicWhere(includeResolved: boolean): SQL {
-  if (includeResolved) return inArray(occurrences.status, [...PUBLIC_STATUSES]);
+  if (includeResolved) return sql`${occurrences.status} in ${slugsOfKind("active", "resolved")}`;
   return or(
-    inArray(occurrences.status, ["em_analise", "em_atendimento"]),
-    and(eq(occurrences.status, "resolvido"), gt(occurrences.resolvedAt, sql`now() - make_interval(days => ${RESOLVED_VISIBLE_DAYS})`)),
+    sql`${occurrences.status} in ${slugsOfKind("active")}`,
+    and(sql`${occurrences.status} in ${slugsOfKind("resolved")}`, gt(occurrences.resolvedAt, sql`now() - make_interval(days => ${RESOLVED_VISIBLE_DAYS})`)),
   )!;
 }
 
@@ -178,7 +186,7 @@ const idParam = (req: FastifyRequest) => {
   return id;
 };
 
-export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: boolean }) {
+export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: boolean; geocode: GeocodeQueue }) {
   const rl = (max: number, window: string) => limitConfig(opts.rateLimit, max, window);
   await app.register(multipart, { limits: { fileSize: MAX_PHOTO_BYTES, files: 1, fields: 10, fieldSize: 4096, parts: 12 } });
   const staffOnly = app.requireRole("servidor", "gestor");
@@ -188,6 +196,8 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
     const { fields, file } = await readMultipart(req);
     const data = parse(createOccurrenceFieldsSchema, fields);
     const authorId = req.auth.userId;
+    const { cat } = await getMeta();
+    if (!cat.get(data.category)?.active) throw new HttpError(400, "Dados inválidos", { category: ["Categoria inválida"] });
 
     const [profile] = await db.select({ id: citizenProfiles.userId }).from(citizenProfiles).where(eq(citizenProfiles.userId, authorId));
     if (!profile) throw new HttpError(403, "Conclua o onboarding antes de registrar ocorrências");
@@ -223,6 +233,7 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
         });
         return occurrenceId;
       });
+      if (!data.neighborhood) opts.geocode.enqueue(id);
       return reply.code(201).send(dto((await fetchOne(id))!));
     } catch (e) {
       await discardPhoto(photoKey);
@@ -247,8 +258,8 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
   app.get("/occurrences/:id", async (req, reply) => {
     const id = idParam(req);
     const auth = await app.tryAuth(req);
-    const row = await fetchOne(id);
-    if (!row || !canSee(auth, row)) throw new HttpError(404, "Ocorrência não encontrada"); // 404, não 403: não revela que existe
+    const [row, { st }] = await Promise.all([fetchOne(id), getMeta()]);
+    if (!row || !canSee(st, auth, row)) throw new HttpError(404, "Ocorrência não encontrada"); // 404, não 403: não revela que existe
     const body: Record<string, unknown> = dto(row);
     if (isStaff(auth)) Object.assign(body, staffExtras(row));
     if (isStaff(auth) || auth?.userId === row.authorId) {
@@ -266,8 +277,8 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
   app.get("/occurrences/:id/photo", async (req: FastifyRequest, reply: FastifyReply) => {
     const id = idParam(req);
     const auth = await app.tryAuth(req);
-    const row = await fetchOne(id);
-    if (!row || !row.photoKey || !canSee(auth, row)) throw new HttpError(404, "Foto não encontrada");
+    const [row, { st }] = await Promise.all([fetchOne(id), getMeta()]);
+    if (!row || !row.photoKey || !canSee(st, auth, row)) throw new HttpError(404, "Foto não encontrada");
     const thumb = (req.query as { size?: string }).size === "thumb";
     let file;
     try {
@@ -275,7 +286,7 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
     } catch {
       throw new HttpError(404, "Foto não encontrada");
     }
-    const open = isPublic(row.status);
+    const open = isPublic(st, row.status);
     return reply
       .header("Content-Type", "image/jpeg")
       .header("Content-Length", file.size)
@@ -317,6 +328,11 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
     const { fields, file } = await readMultipart(req);
     const data = parse(staffCreateFieldsSchema, fields);
     const actor = req.auth;
+    const { cat, st } = await getMeta();
+    if (!cat.get(data.category)?.active) throw new HttpError(400, "Dados inválidos", { category: ["Categoria inválida"] });
+    // Cadastro manual entra "não verificado" ou em andamento; resolvido/recusado só por transição (com histórico e motivo).
+    const chosen = st.get(data.status);
+    if (!chosen?.active || (chosen.kind !== "initial" && chosen.kind !== "active")) throw new HttpError(400, "Dados inválidos", { status: ["Status inválido para cadastro"] });
     const contact = data.reporterName || data.reporterPhone ? encrypt(JSON.stringify({ name: data.reporterName ?? null, phone: data.reporterPhone ?? null })) : null;
 
     const photoKey = file ? await photoOrThrow(file) : null;
@@ -358,6 +374,7 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
         });
         return occurrenceId;
       });
+      if (!data.neighborhood) opts.geocode.enqueue(id);
       const row = (await fetchOne(id))!;
       return reply.code(201).send({ ...dto(row), authorId: row.authorId, ...staffExtras(row) });
     } catch (e) {
@@ -370,8 +387,10 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
     const id = idParam(req);
     const body = parse(staffUpdateSchema, req.body);
     const actor = req.auth;
+    const { cat, st } = await getMeta();
+    if (body.category && !cat.get(body.category)?.active) throw new HttpError(400, "Dados inválidos", { category: ["Categoria inválida"] });
 
-    return db.transaction(async (tx) => {
+    const result = await db.transaction(async (tx) => {
       const cur = await fetchOne(id, tx, true); // trava a linha: duas edições simultâneas não se atropelam
       if (!cur) throw new HttpError(404, "Ocorrência não encontrada");
 
@@ -383,11 +402,14 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
         changes.location = { from: { lat: cur.lat, lng: cur.lng }, to: { lat: body.lat, lng: body.lng } };
       }
       const newStatus = body.status && body.status !== cur.status ? body.status : null;
+      const from = st.get(cur.status);
+      const to = newStatus ? st.get(newStatus) : undefined;
       if (newStatus) {
-        if (!ALLOWED_TRANSITIONS[cur.status].includes(newStatus)) {
-          throw new HttpError(409, `Transição inválida: ${STATUS_LABELS[cur.status]} → ${STATUS_LABELS[newStatus]}`);
+        if (!to) throw new HttpError(400, "Dados inválidos", { status: ["Status inválido"] });
+        if (!from || !canTransition(from, to)) {
+          throw new HttpError(409, `Transição inválida: ${from?.name ?? cur.status} → ${to.name}`);
         }
-        if (newStatus === "recusado" && !body.note) throw new HttpError(400, "Informe o motivo da recusa em 'note'");
+        if (to.kind === "rejected" && !body.note) throw new HttpError(400, "Informe o motivo da recusa em 'note'");
         changes.status = { from: cur.status, to: newStatus };
         if (body.note) changes.note = { from: null, to: body.note };
       } else if (body.note) {
@@ -403,7 +425,7 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
           ...(changes.description ? { description: body.description } : {}),
           ...(changes.neighborhood ? { neighborhood: body.neighborhood } : {}),
           ...(changes.location ? { location: sql`ST_SetSRID(ST_MakePoint(${body.lng}, ${body.lat}), 4326)` as unknown as { x: number; y: number } } : {}),
-          ...(newStatus ? { status: newStatus, resolvedAt: newStatus === "resolvido" ? sql`now()` : cur.status === "resolvido" ? null : undefined } : {}),
+          ...(newStatus ? { status: newStatus, resolvedAt: to?.kind === "resolved" ? sql`now()` : from?.kind === "resolved" ? null : undefined } : {}),
         })
         .where(eq(occurrences.id, id));
 
@@ -416,7 +438,7 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
           type: "status_changed",
           title: "Sua ocorrência foi atualizada",
           body:
-            `${CATEGORY_LABELS[cur.category]} "${snippet}": ${STATUS_LABELS[cur.status]} → ${STATUS_LABELS[newStatus]}.` +
+            `${cat.get(cur.category)?.name ?? cur.category} "${snippet}": ${from?.name ?? cur.status} → ${to!.name}.` +
             (body.note ? ` Mensagem da prefeitura: ${body.note}` : ""),
           fromStatus: cur.status,
           toStatus: newStatus,
@@ -432,6 +454,9 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
       });
       return { changed: true, ...dto((await fetchOne(id, tx))!) };
     });
+    // Mudou o ponto e ainda não há bairro: tenta descobrir pelo novo local.
+    if (result.changed && body.lat !== undefined && !result.neighborhood) opts.geocode.enqueue(id);
+    return result;
   });
 
   app.put("/staff/occurrences/:id/photo", { preHandler: staffOnly, ...rl(30, "1 minute") }, async (req) => {
@@ -468,13 +493,13 @@ export async function occurrenceRoutes(app: FastifyInstance, opts: { rateLimit: 
       db.select({ key: occurrences.status, total: count() }).from(occurrences).groupBy(occurrences.status),
       db.select({ key: occurrences.category, total: count() }).from(occurrences).groupBy(occurrences.category),
       db.execute(sql`select avg(extract(epoch from (resolved_at - created_at)) / 3600)::float8 as hours
-        from occurrences where status = 'resolvido' and resolved_at is not null`),
+        from occurrences where status in ${slugsOfKind("resolved")} and resolved_at is not null`),
       db.execute(sql`select to_char(d::date, 'YYYY-MM-DD') as day, coalesce(c.total, 0)::int as total
         from generate_series(current_date - 13, current_date, interval '1 day') d
         left join (select created_at::date as day, count(*) as total from occurrences
                    where created_at >= current_date - 13 group by 1) c on c.day = d::date
         order by d`),
-      db.execute(sql`select count(*)::int as total from occurrences where status = 'nao_verificado' and created_at < now() - interval '24 hours'`),
+      db.execute(sql`select count(*)::int as total from occurrences where status in ${slugsOfKind("initial")} and created_at < now() - interval '24 hours'`),
     ]);
     const hours = (resolution.rows[0] as { hours: number | null } | undefined)?.hours ?? null;
     return {

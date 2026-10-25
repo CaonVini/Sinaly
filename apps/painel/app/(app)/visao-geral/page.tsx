@@ -1,5 +1,4 @@
 "use client";
-import { CATEGORY_LABELS, STATUSES, STATUS_LABELS, type Category, type Status } from "@sinaly/shared";
 import { AlertTriangle, CheckCircle2, Clock, Inbox, Wrench } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
@@ -8,6 +7,7 @@ import type { ReactNode } from "react";
 import { statusColor } from "@/components/status-badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useMeta } from "@/lib/meta";
 import { useApi, type Activity, type Occurrence, type Stats } from "@/lib/client";
 import { cn, fmtDateTime, timeAgo } from "@/lib/utils";
 
@@ -75,10 +75,11 @@ function Panel({ title, action, children, className }: { title: string; action?:
 }
 
 /** Texto curto do que aconteceu, a partir do registro de auditoria. */
-function describe(a: Activity): string {
+function describe(a: Activity, statusName: (s: string) => string): string {
   const s = a.changes.status;
   if (a.action === "create") return a.changes.source?.to === "prefeitura" ? "registrou pela prefeitura" : "registrou";
-  if (s) return `${STATUS_LABELS[s.from as Status] ?? "—"} → ${STATUS_LABELS[s.to as Status] ?? String(s.to)}`;
+  if (s) return `${s.from ? statusName(String(s.from)) : "—"} → ${statusName(String(s.to))}`;
+  if (a.action === "geocode_auto") return "preencheu o bairro automaticamente";
   if (a.action === "photo_replace") return "trocou a foto";
   return `editou ${Object.keys(a.changes).filter((k) => k !== "note").map((k) => ({ category: "categoria", description: "descrição", location: "local" })[k] ?? k).join(", ")}`;
 }
@@ -91,9 +92,15 @@ export default function OverviewPage() {
   const activity = useApi<{ items: Activity[] }>("staff/activity?limit=12");
 
   const data = stats.data;
+  const { meta, statusName, categoryName } = useMeta();
   const s = data?.byStatus ?? {};
-  const n = (k: Status) => s[k] ?? 0;
-  const total = STATUSES.reduce((a, k) => a + n(k), 0);
+  const n = (k: string) => s[k] ?? 0;
+  const total = Object.values(s).reduce((a, v) => a + v, 0);
+  // Os cartões somam por TIPO de status, então valem também para os status criados pela prefeitura.
+  const ofKind = (kind: string) => meta.statuses.filter((x) => x.kind === kind);
+  const sumKind = (kind: string) => ofKind(kind).reduce((a, x) => a + n(x.slug), 0);
+  const active = ofKind("active");
+  const visibleStatuses = meta.statuses.filter((x) => x.active || n(x.slug) > 0);
   const open = (id: string) => router.push(`/ocorrencias?id=${id}`);
 
   return (
@@ -119,9 +126,9 @@ export default function OverviewPage() {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {!data ? Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-32" />) : (
           <>
-            <Kpi title="Aguardando verificação" value={n("nao_verificado")} hint="Fila de triagem" icon={<Inbox />} href="/ocorrencias?status=nao_verificado" tone={data.unverifiedOver24h ? "warn" : undefined} />
-            <Kpi title="Em andamento" value={n("em_atendimento") + n("em_analise")} hint={`${n("em_analise")} em análise · ${n("em_atendimento")} em atendimento`} icon={<Wrench />} href="/ocorrencias?status=em_atendimento" />
-            <Kpi title="Resolvidas" value={n("resolvido")} hint={total ? `${Math.round((n("resolvido") / total) * 100)}% do total` : "Nenhuma ainda"} icon={<CheckCircle2 />} href="/ocorrencias?status=resolvido" />
+            <Kpi title="Aguardando verificação" value={sumKind("initial")} hint="Fila de triagem" icon={<Inbox />} href="/ocorrencias?status=nao_verificado" tone={data.unverifiedOver24h ? "warn" : undefined} />
+            <Kpi title="Em andamento" value={sumKind("active")} hint={active.filter((x) => n(x.slug) > 0).map((x) => `${n(x.slug)} ${x.name.toLowerCase()}`).join(" · ") || "Nenhuma em andamento"} icon={<Wrench />} href={`/ocorrencias?status=${active.find((x) => !x.isEntry)?.slug ?? "em_atendimento"}`} />
+            <Kpi title="Resolvidas" value={sumKind("resolved")} hint={total ? `${Math.round((sumKind("resolved") / total) * 100)}% do total` : "Nenhuma ainda"} icon={<CheckCircle2 />} href="/ocorrencias?status=resolvido" />
             <Kpi
               title="Tempo médio de resolução"
               value={data.avgResolutionHours === null ? "—" : data.avgResolutionHours < 48 ? `${data.avgResolutionHours} h` : `${Math.round(data.avgResolutionHours / 24)} d`}
@@ -145,10 +152,10 @@ export default function OverviewPage() {
           </Card>
           <div className="grid gap-4 md:grid-cols-3">
             <Panel title="Por status">
-              <Bars max={Math.max(1, ...STATUSES.map(n))} rows={STATUSES.map((k) => ({ label: STATUS_LABELS[k], value: n(k), color: statusColor(k) }))} />
+              <Bars max={Math.max(1, ...visibleStatuses.map((x) => n(x.slug)))} rows={visibleStatuses.map((x) => ({ label: x.name, value: n(x.slug), color: statusColor(x.slug) }))} />
             </Panel>
             <Panel title="Por categoria">
-              <Bars max={Math.max(1, ...Object.values(data?.byCategory ?? {}))} rows={(Object.keys(CATEGORY_LABELS) as Category[]).map((k) => ({ label: CATEGORY_LABELS[k], value: data?.byCategory[k] ?? 0 }))} />
+              <Bars max={Math.max(1, ...Object.values(data?.byCategory ?? {}))} rows={meta.categories.filter((c) => c.active || (data?.byCategory[c.slug] ?? 0) > 0).map((c) => ({ label: c.name, value: data?.byCategory[c.slug] ?? 0 }))} />
             </Panel>
             <Panel title="Registros nos últimos 14 dias">{data && <PerDay days={data.perDay} />}</Panel>
           </div>
@@ -163,7 +170,7 @@ export default function OverviewPage() {
                   <button onClick={() => open(o.id)} className="flex w-full items-start gap-3 rounded-md px-2 py-2.5 text-left transition-colors hover:bg-accent/60">
                     <span className="mt-1.5 size-2 shrink-0 rounded-full" style={{ background: statusColor(o.status) }} />
                     <span className="min-w-0 flex-1">
-                      <span className="flex justify-between gap-2 text-sm font-medium">{CATEGORY_LABELS[o.category]}<span className="text-xs font-normal text-muted-foreground">{timeAgo(o.createdAt)}</span></span>
+                      <span className="flex justify-between gap-2 text-sm font-medium">{categoryName(o.category)}<span className="text-xs font-normal text-muted-foreground">{timeAgo(o.createdAt)}</span></span>
                       <span className="line-clamp-1 text-sm text-muted-foreground">{o.description}</span>
                     </span>
                   </button>
@@ -178,8 +185,8 @@ export default function OverviewPage() {
               {(activity.data?.items ?? []).map((a) => (
                 <li key={a.id}>
                   <button onClick={() => open(a.occurrenceId)} className="flex w-full flex-col gap-0.5 rounded-md px-2 py-2.5 text-left transition-colors hover:bg-accent/60" title={fmtDateTime(a.at)}>
-                    <span className="flex justify-between gap-2 text-sm"><span><span className="font-medium">{a.actorName ?? "Servidor"}</span> <span className="text-muted-foreground">{describe(a)}</span></span><span className="shrink-0 text-xs text-muted-foreground">{timeAgo(a.at)}</span></span>
-                    <span className="line-clamp-1 text-xs text-muted-foreground">{CATEGORY_LABELS[a.category]} · {a.description}</span>
+                    <span className="flex justify-between gap-2 text-sm"><span><span className="font-medium">{a.actorName ?? "Servidor"}</span> <span className="text-muted-foreground">{describe(a, statusName)}</span></span><span className="shrink-0 text-xs text-muted-foreground">{timeAgo(a.at)}</span></span>
+                    <span className="line-clamp-1 text-xs text-muted-foreground">{categoryName(a.category)} · {a.description}</span>
                   </button>
                 </li>
               ))}

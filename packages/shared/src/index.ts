@@ -1,60 +1,82 @@
 import { z } from "zod";
 
-export const CATEGORIES = [
-  "seguranca",
-  "infraestrutura",
-  "sinalizacao",
-  "saneamento",
-  "iluminacao",
-] as const;
-export const categorySchema = z.enum(CATEGORIES);
-export type Category = z.infer<typeof categorySchema>;
+/** Identificadores (slugs) de categoria e status: minúsculas, números e "_". Os valores vêm do banco e a prefeitura edita. */
+export const slugSchema = z.string().regex(/^[a-z0-9_]{2,40}$/, "Identificador inválido");
+export const categorySchema = slugSchema;
+export type Category = string;
 
 export const ROLES = ["cidadao", "servidor", "gestor"] as const;
 export const roleSchema = z.enum(ROLES);
 export type Role = z.infer<typeof roleSchema>;
 
-// Fluxo: nao_verificado -> (recusado | em_analise -> em_atendimento -> resolvido)
-export const STATUSES = [
-  "nao_verificado",
-  "em_analise",
-  "em_atendimento",
-  "resolvido",
-  "recusado",
+export const statusSchema = slugSchema;
+export type Status = string;
+
+/**
+ * Tipo do status: é ele (e não o nome) que define as regras do sistema.
+ *  - initial:  ocorrência recém-registrada; não aparece no mapa público; tem um só (não verificado).
+ *  - active:   em andamento; aparece no mapa público. Pode haver vários, a prefeitura cria os seus.
+ *  - resolved: resolvida; aparece no mapa por N dias e guarda a data de resolução.
+ *  - rejected: recusada; não aparece no mapa e exige motivo.
+ */
+export const STATUS_KINDS = ["initial", "active", "resolved", "rejected"] as const;
+export type StatusKind = (typeof STATUS_KINDS)[number];
+
+export const ICON_KEYS = [
+  "shield", "wrench", "signpost", "droplet", "lightbulb", "trash", "tree", "bus", "zap", "building", "construction", "car", "flame", "siren", "paw", "hard-hat",
 ] as const;
-export const statusSchema = z.enum(STATUSES);
-export type Status = z.infer<typeof statusSchema>;
+export type IconKey = (typeof ICON_KEYS)[number];
 
-export const STATUS_LABELS: Record<Status, string> = {
-  nao_verificado: "Não verificado",
-  em_analise: "Em análise",
-  em_atendimento: "Em atendimento",
-  resolvido: "Resolvido",
-  recusado: "Recusado",
-};
+export type CategoryMeta = { slug: Category; name: string; color: string; icon: IconKey; active: boolean; system: boolean; sort: number };
+export type StatusMeta = { slug: Status; name: string; color: string; kind: StatusKind; isEntry: boolean; active: boolean; system: boolean; sort: number };
+export type Meta = { categories: CategoryMeta[]; statuses: StatusMeta[]; resolvedVisibleDays: number };
 
-export const CATEGORY_LABELS: Record<Category, string> = {
-  seguranca: "Segurança",
-  infraestrutura: "Infraestrutura",
-  sinalizacao: "Sinalização",
-  saneamento: "Saneamento",
-  iluminacao: "Iluminação",
-};
-
-/** Status que qualquer pessoa pode ver no mapa público. */
-export const PUBLIC_STATUSES: readonly Status[] = ["em_analise", "em_atendimento", "resolvido"];
+/** Dados iniciais (migração 0004). Os "system" não podem ser apagados nem mudar de tipo. */
+export const SYSTEM_CATEGORIES: Pick<CategoryMeta, "slug" | "name" | "color" | "icon">[] = [
+  { slug: "seguranca", name: "Segurança", color: "#dc2626", icon: "shield" },
+  { slug: "infraestrutura", name: "Infraestrutura", color: "#2563eb", icon: "wrench" },
+  { slug: "sinalizacao", name: "Sinalização", color: "#9333ea", icon: "signpost" },
+  { slug: "saneamento", name: "Saneamento", color: "#0891b2", icon: "droplet" },
+  { slug: "iluminacao", name: "Iluminação", color: "#ca8a04", icon: "lightbulb" },
+];
+export const SYSTEM_STATUSES: Pick<StatusMeta, "slug" | "name" | "color" | "kind" | "isEntry">[] = [
+  { slug: "nao_verificado", name: "Não verificado", color: "#e5a400", kind: "initial", isEntry: false },
+  { slug: "em_analise", name: "Em análise", color: "#2563eb", kind: "active", isEntry: true },
+  { slug: "em_atendimento", name: "Em atendimento", color: "#f97316", kind: "active", isEntry: false },
+  { slug: "resolvido", name: "Resolvido", color: "#15803d", kind: "resolved", isEntry: false },
+  { slug: "recusado", name: "Recusado", color: "#ef4444", kind: "rejected", isEntry: false },
+];
 
 /** Depois de resolvida, a ocorrência some do mapa após N dias (volta com o filtro "resolvidos"). */
 export const RESOLVED_VISIBLE_DAYS = 5;
 
-/** Transições que a prefeitura pode fazer. Qualquer outra é recusada pela API. */
-export const ALLOWED_TRANSITIONS: Record<Status, readonly Status[]> = {
-  nao_verificado: ["em_analise", "recusado"],
-  em_analise: ["em_atendimento", "resolvido", "recusado"],
-  em_atendimento: ["em_analise", "resolvido"],
-  resolvido: ["em_atendimento"], // reabrir
-  recusado: ["nao_verificado"], // reconsiderar
-};
+/** Status que qualquer pessoa pode ver no mapa público (resolvidos só pelos primeiros N dias). */
+export const isPublicKind = (k: StatusKind) => k === "active" || k === "resolved";
+
+/**
+ * Transições permitidas, por tipo (valem para os status do sistema e para os criados pela prefeitura):
+ *  initial  -> primeiro estágio (isEntry) ou rejected
+ *  active   -> outro active, resolved; rejected só a partir do primeiro estágio
+ *  resolved -> active que não seja o primeiro estágio (reabrir)
+ *  rejected -> initial (reconsiderar)
+ * Com os 5 status originais isso reproduz exatamente o fluxo antigo.
+ */
+export function canTransition(from: StatusMeta, to: StatusMeta): boolean {
+  if (from.slug === to.slug || !to.active) return false;
+  switch (from.kind) {
+    case "initial":
+      return (to.kind === "active" && to.isEntry) || to.kind === "rejected";
+    case "active":
+      return to.kind === "active" || to.kind === "resolved" || (to.kind === "rejected" && from.isEntry);
+    case "resolved":
+      return to.kind === "active" && !to.isEntry;
+    case "rejected":
+      return to.kind === "initial";
+  }
+}
+export const allowedTargets = (from: StatusMeta, all: StatusMeta[]) => all.filter((t) => canTransition(from, t));
+
+export const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Cor inválida (use #RRGGBB)");
 
 /** Remove caracteres de controle (exceto quebra de linha) e espaços nas pontas. */
 export const cleanText = (v: string) =>
@@ -81,8 +103,6 @@ export const createOccurrenceFieldsSchema = z.object({
 });
 export type CreateOccurrenceFields = z.infer<typeof createOccurrenceFieldsSchema>;
 
-/** Estados em que a prefeitura pode registrar uma ocorrência (ex.: ligação por telefone). */
-export const STAFF_CREATE_STATUSES = ["nao_verificado", "em_analise", "em_atendimento"] as const;
 export const SOURCES = ["app", "prefeitura"] as const;
 export type Source = (typeof SOURCES)[number];
 export const SOURCE_LABELS: Record<Source, string> = { app: "Aplicativo", prefeitura: "Prefeitura" };
@@ -91,7 +111,8 @@ const blankToUndefined = (v: unknown) => (typeof v === "string" && v.trim() === 
 
 /** Cadastro manual pela prefeitura (multipart; a foto é opcional). Contato de quem ligou é opcional. */
 export const staffCreateFieldsSchema = createOccurrenceFieldsSchema.extend({
-  status: z.enum(STAFF_CREATE_STATUSES).default("em_analise"),
+  // Padrão: primeiro estágio ("em_analise"); a API valida que o status existe, está ativo e não é resolvido/recusado.
+  status: statusSchema.default("em_analise"),
   // Campo vazio do formulário vale como "não informado".
   reporterName: z.preprocess(blankToUndefined, text(2, 120).optional()),
   reporterPhone: z.preprocess(
@@ -228,3 +249,38 @@ export const onboardingSchema = z.object({
   }),
 });
 export type OnboardingInput = z.infer<typeof onboardingSchema>;
+
+// ---------- Configuração (só gestor) ----------
+const configName = text(2, 40);
+export const categoryCreateSchema = z.object({ name: configName, color: hexColor, icon: z.enum(ICON_KEYS) }).strict();
+export const categoryPatchSchema = z
+  .object({ name: configName.optional(), color: hexColor.optional(), icon: z.enum(ICON_KEYS).optional(), active: z.boolean().optional() })
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, "Nada para alterar");
+// Status criados pela prefeitura são sempre "em andamento" (active); o tipo dos status do sistema não muda.
+export const statusCreateSchema = z.object({ name: configName, color: hexColor }).strict();
+export const statusPatchSchema = z
+  .object({ name: configName.optional(), color: hexColor.optional(), active: z.boolean().optional() })
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, "Nada para alterar");
+export const orderSchema = z.object({ slugs: z.array(slugSchema).min(1).max(200) }).strict();
+
+/** Slug a partir do nome: sem acento, minúsculo, "_" entre palavras. */
+export function slugify(name: string): string {
+  const base = name
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 36);
+  return base.length >= 2 ? base : `item_${Math.random().toString(36).slice(2, 6)}`;
+}
+
+// ---------- Relatórios ----------
+export const reportQuerySchema = z.object({
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  category: categorySchema.optional(),
+  status: statusSchema.optional(),
+});

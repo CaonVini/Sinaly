@@ -31,8 +31,8 @@ export type AuditEntry = {
 };
 
 export type Stats = {
-  byStatus: Partial<Record<Status, number>>;
-  byCategory: Partial<Record<Category, number>>;
+  byStatus: Record<string, number>;
+  byCategory: Record<string, number>;
   avgResolutionHours: number | null;
   perDay: { day: string; total: number }[];
   unverifiedOver24h: number;
@@ -57,7 +57,7 @@ export class ApiError extends Error {
 }
 
 /** Fala com a API através do proxy do painel (cookies httpOnly; sem token no JS). */
-export async function api<T>(path: string, init?: { method?: "GET" | "PATCH" | "POST"; body?: unknown; signal?: AbortSignal }): Promise<T> {
+export async function api<T>(path: string, init?: { method?: "GET" | "PATCH" | "POST" | "PUT" | "DELETE"; body?: unknown; signal?: AbortSignal }): Promise<T> {
   const form = init?.body instanceof FormData;
   const res = await fetch(`/api/proxy/${path}`, {
     method: init?.method ?? "GET",

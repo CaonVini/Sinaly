@@ -2,22 +2,23 @@
 import type { Map as LMap, Marker } from "leaflet";
 import { useEffect, useRef } from "react";
 import type { Occurrence } from "@/lib/client";
-import { STATUSES, STATUS_LABELS } from "@sinaly/shared";
 import { statusColor } from "@/components/status-badge";
+import { useMeta } from "@/lib/meta";
 import { PIN_ANCHOR, PIN_SIZE, pinHtml } from "@/lib/pin";
 
 const BR_CENTER: [number, number] = [-14.2, -51.9];
 
 /** Mapa Leaflet com um marcador por ocorrência, colorido pelo status. Carregado só no navegador. */
 export function OccurrenceMap({ items, selectedId, onSelect, fitKey }: { items: Occurrence[]; selectedId: string | null; onSelect: (id: string) => void; fitKey: string }) {
+  const { meta } = useMeta();
   const el = useRef<HTMLDivElement>(null);
   const state = useRef<{ L: typeof import("leaflet"); map: LMap; markers: Map<string, Marker> } | null>(null);
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
   const lastFit = useRef<string | null>(null);
   // O mapa nasce depois do primeiro render (import dinâmico): a sincronização lê sempre os valores mais recentes.
-  const latest = useRef({ items, selectedId, fitKey });
-  latest.current = { items, selectedId, fitKey };
+  const latest = useRef({ items, selectedId, fitKey, meta });
+  latest.current = { items, selectedId, fitKey, meta };
 
   useEffect(() => {
     let dead = false;
@@ -40,14 +41,16 @@ export function OccurrenceMap({ items, selectedId, onSelect, fitKey }: { items: 
   function sync() {
     const s = state.current;
     if (!s) return;
-    const { items, selectedId, fitKey } = latest.current;
+    const { items, selectedId, fitKey, meta } = latest.current;
+    const colorOf = new Map(meta.statuses.map((x) => [x.slug, x.color]));
+    const iconOf = new Map(meta.categories.map((x) => [x.slug, x.icon]));
     const { L, map, markers } = s;
     const ids = new Set(items.map((i) => i.id));
     for (const [id, m] of markers) if (!ids.has(id)) (m.remove(), markers.delete(id));
     for (const o of items) {
       const icon = L.divIcon({
         className: `sn-pin${o.id === selectedId ? " active" : ""}`,
-        html: pinHtml(o.status, o.category),
+        html: pinHtml(colorOf.get(o.status) ?? "", iconOf.get(o.category) ?? "wrench"),
         iconSize: PIN_SIZE,
         iconAnchor: PIN_ANCHOR,
       });
@@ -61,7 +64,7 @@ export function OccurrenceMap({ items, selectedId, onSelect, fitKey }: { items: 
     }
   }
 
-  useEffect(sync, [items, selectedId, fitKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(sync, [items, selectedId, fitKey, meta]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const o = items.find((i) => i.id === selectedId);
@@ -72,10 +75,10 @@ export function OccurrenceMap({ items, selectedId, onSelect, fitKey }: { items: 
     <div className="relative size-full">
       <div ref={el} className="size-full" role="application" aria-label="Mapa das ocorrências" />
       <ul className="absolute inset-x-3 bottom-7 z-[900] mx-auto flex w-fit flex-wrap justify-center gap-x-4 gap-y-1 rounded-2xl bg-card/95 px-4 py-2 text-xs font-medium shadow-md ring-1 ring-black/5 backdrop-blur" aria-label="Legenda do mapa">
-        {STATUSES.map((s) => (
-          <li key={s} className="flex items-center gap-1.5 whitespace-nowrap">
-            <span className="size-2.5 rounded-full" style={{ background: statusColor(s) }} />
-            {STATUS_LABELS[s]}
+        {meta.statuses.filter((s) => s.active).map((s) => (
+          <li key={s.slug} className="flex items-center gap-1.5 whitespace-nowrap">
+            <span className="size-2.5 rounded-full" style={{ background: statusColor(s.slug) }} />
+            {s.name}
           </li>
         ))}
       </ul>

@@ -23,6 +23,7 @@ declare module "fastify" {
     auth: Auth;
   }
   interface FastifyInstance {
+    geocode: import("./geocode.js").GeocodeQueue;
     tryAuth: (req: FastifyRequest) => Promise<Auth | null>;
     authenticate: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
     requireRole: (...roles: Role[]) => (req: FastifyRequest, reply: FastifyReply) => Promise<void>;

@@ -8,14 +8,47 @@ import {
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { CATEGORIES, ROLES, SOURCES, STATUSES } from "@sinaly/shared";
+import { sql } from "drizzle-orm";
+import { ROLES, SOURCES, STATUS_KINDS } from "@sinaly/shared";
 
 export const roleEnum = pgEnum("role", ROLES);
-export const categoryEnum = pgEnum("category", CATEGORIES);
-export const statusEnum = pgEnum("status", STATUSES);
+export const statusKindEnum = pgEnum("status_kind", STATUS_KINDS);
 export const sourceEnum = pgEnum("occurrence_source", SOURCES);
+
+// Categorias e status editáveis pela prefeitura (gestor). O "slug" é o identificador estável usado nas ocorrências.
+export const categories = pgTable(
+  "categories",
+  {
+    slug: text("slug").primaryKey(),
+    name: text("name").notNull(),
+    color: text("color").notNull(),
+    icon: text("icon").notNull(),
+    active: boolean("active").notNull().default(true),
+    system: boolean("system").notNull().default(false),
+    sort: integer("sort").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("categories_name_uq").on(sql`lower(${t.name})`)],
+);
+
+export const statuses = pgTable(
+  "statuses",
+  {
+    slug: text("slug").primaryKey(),
+    name: text("name").notNull(),
+    color: text("color").notNull(),
+    kind: statusKindEnum("kind").notNull(),
+    isEntry: boolean("is_entry").notNull().default(false),
+    active: boolean("active").notNull().default(true),
+    system: boolean("system").notNull().default(false),
+    sort: integer("sort").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("statuses_name_uq").on(sql`lower(${t.name})`)],
+);
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -38,13 +71,13 @@ export const occurrences = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     authorId: uuid("author_id").notNull().references(() => users.id),
-    category: categoryEnum("category").notNull(),
+    category: text("category").notNull().references(() => categories.slug),
     description: text("description").notNull(),
     // Ponto WGS84 (x = longitude, y = latitude). Consultas do mapa usam bbox (&&) com o índice GiST.
     location: geometry("location", { type: "point", mode: "xy", srid: 4326 }).notNull(),
     neighborhood: text("neighborhood"),
     photoKey: text("photo_key"),
-    status: statusEnum("status").notNull().default("nao_verificado"),
+    status: text("status").notNull().default("nao_verificado").references(() => statuses.slug),
     moderationFlag: text("moderation_flag"),
     // "prefeitura" = cadastrada por funcionário (ex.: ligação). Contato de quem ligou fica cifrado (JSON).
     source: sourceEnum("source").notNull().default("app"),
@@ -67,8 +100,8 @@ export const statusHistory = pgTable(
   {
     id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
     occurrenceId: uuid("occurrence_id").notNull().references(() => occurrences.id, { onDelete: "cascade" }),
-    fromStatus: statusEnum("from_status"),
-    toStatus: statusEnum("to_status").notNull(),
+    fromStatus: text("from_status").references(() => statuses.slug),
+    toStatus: text("to_status").notNull().references(() => statuses.slug),
     changedBy: uuid("changed_by").references(() => users.id),
     note: text("note"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -152,10 +185,26 @@ export const notifications = pgTable(
     type: text("type").notNull(), // status_changed
     title: text("title").notNull(),
     body: text("body").notNull(),
-    fromStatus: statusEnum("from_status"),
-    toStatus: statusEnum("to_status"),
+    fromStatus: text("from_status").references(() => statuses.slug),
+    toStatus: text("to_status").references(() => statuses.slug),
     readAt: timestamp("read_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("notifications_user_idx").on(t.userId, t.createdAt, t.id)],
+);
+
+// Auditoria da configuração (categorias e status): SOMENTE inserção, como a das ocorrências.
+export const configAudit = pgTable(
+  "config_audit",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    actorId: uuid("actor_id").notNull().references(() => users.id),
+    entity: text("entity").notNull(), // category | status
+    entityKey: text("entity_key").notNull(), // slug (ou "order")
+    action: text("action").notNull(), // create | update | delete | reorder
+    changes: jsonb("changes").notNull().default({}),
+    ip: text("ip"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("config_audit_created_idx").on(t.createdAt)],
 );

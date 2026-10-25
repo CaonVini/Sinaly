@@ -1,11 +1,12 @@
 "use client";
-import { LayoutDashboard, ListChecks, LogOut, Table2, type LucideIcon } from "lucide-react";
+import { BarChart3, LayoutDashboard, ListChecks, LogOut, Settings, Table2, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { Logo } from "@/components/logo";
 import { Button } from "@/components/ui/button";
 import { useApi, type Stats } from "@/lib/client";
+import { useMeta } from "@/lib/meta";
 import { cn } from "@/lib/utils";
 
 type Item = { href: string; label: string; icon: LucideIcon; badge?: number };
@@ -18,12 +19,16 @@ export function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const { data: me } = useApi<{ name: string | null; email: string; role: string }>("me");
   const { data: stats } = useApi<Stats>("staff/stats");
-  const pending = stats?.byStatus.nao_verificado ?? 0;
+  const { meta } = useMeta();
+  const pending = meta.statuses.filter((s) => s.kind === "initial").reduce((a, s) => a + (stats?.byStatus[s.slug] ?? 0), 0);
 
   const items: Item[] = [
     { href: "/visao-geral", label: "Visão geral", icon: LayoutDashboard },
     { href: "/ocorrencias", label: "Ocorrências", icon: ListChecks, badge: pending },
     { href: "/planilha", label: "Planilha", icon: Table2 },
+    { href: "/relatorios", label: "Relatórios", icon: BarChart3 },
+    // Só o gestor altera a configuração (a API também exige).
+    ...(me?.role === "gestor" ? [{ href: "/configuracao", label: "Configuração", icon: Settings }] : []),
   ];
 
   async function logout() {
