@@ -3,6 +3,7 @@ import type { FastifyBaseLogger } from "fastify";
 import { db } from "./db/client.js";
 import { occurrenceAudit, occurrences, users } from "./db/schema.js";
 import { env } from "./env.js";
+import { geocoderSetting } from "./settings.js";
 
 /** Devolve o bairro de um ponto, ou null se não achou. Nunca lança para o chamador decidir: erros viram null. */
 export type ReverseGeocoder = (lat: number, lng: number) => Promise<string | null>;
@@ -33,6 +34,8 @@ export function createGeocodeQueue(geocode: ReverseGeocoder | null, log: Fastify
   const stats = { filled: 0, notFound: 0, failed: 0, lastError: null as string | null, lastErrorAt: null as string | null, lastFilledAt: null as string | null };
 
   async function fill(id: string) {
+    // O gestor pode desligar a qualquer momento: vale na hora, inclusive para o que já estava na fila.
+    if (!(await geocoderSetting())) return;
     const [row] = await db
       .select({ lat: occurrences.location, authorId: occurrences.authorId })
       .from(occurrences)
@@ -93,6 +96,10 @@ export function createGeocodeQueue(geocode: ReverseGeocoder | null, log: Fastify
       return true;
     },
     /** Espera a fila esvaziar (usado nos testes e no desligamento). */
+    /** Descarta a fila (usado ao desligar). */
+    clear() {
+      pending.clear();
+    },
     async idle() {
       while (running) await running;
     },
@@ -100,6 +107,7 @@ export function createGeocodeQueue(geocode: ReverseGeocoder | null, log: Fastify
     stats: () => ({ ...stats, pending: pending.size }),
     /** Enfileira ocorrências sem bairro (mais novas primeiro). Devolve quantas entraram e quantas ainda faltam. */
     async backfill(limit = 200) {
+      if (!geocode || !(await geocoderSetting())) return { queued: 0, remaining: await this.missing() };
       const rows = await db.select({ id: occurrences.id }).from(occurrences).where(isNull(occurrences.neighborhood)).orderBy(desc(occurrences.createdAt)).limit(limit);
       let queued = 0;
       for (const r of rows) if (this.enqueue(r.id)) queued++;

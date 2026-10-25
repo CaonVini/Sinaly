@@ -1,4 +1,5 @@
 import { count, desc, eq, sql } from "drizzle-orm";
+import { z } from "zod";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   categoryCreateSchema,
@@ -10,10 +11,11 @@ import {
 } from "@sinaly/shared";
 import { db } from "../db/client.js";
 import { isUniqueViolation } from "../db/errors.js";
-import { categories, configAudit, occurrences, statuses, users } from "../db/schema.js";
+import { appSettings, categories, configAudit, occurrences, statuses, users } from "../db/schema.js";
 import type { GeocodeQueue } from "../geocode.js";
 import { HttpError, limitConfig, parse } from "../http.js";
 import { getMeta, invalidateMeta } from "../meta.js";
+import { geocoderSetting, invalidateSettings } from "../settings.js";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type Entity = "category" | "status";
@@ -209,14 +211,31 @@ export async function configRoutes(app: FastifyInstance, opts: { rateLimit: bool
 
   // ---------- bairro automático ----------
   app.get("/staff/geocode/status", { preHandler: gestorOnly }, async () => ({
-    enabled: opts.geocode.enabled,
+    available: opts.geocode.enabled, // servidor configurado (GEOCODER_ENABLED)
+    enabled: opts.geocode.enabled && (await geocoderSetting()), // e ligado pelo gestor
     missing: await opts.geocode.missing(),
     ...opts.geocode.stats(),
   }));
 
+  // Liga/desliga o preenchimento automático. Persistido, auditado, vale na hora.
+  app.put("/staff/config/geocoder", { preHandler: gestorOnly, ...rl(30) }, async (req) => {
+    const { enabled } = parse(z.object({ enabled: z.boolean() }).strict(), req.body);
+    const before = await geocoderSetting();
+    if (before !== enabled) {
+      await db.transaction(async (tx) => {
+        await tx.insert(appSettings).values({ key: "geocoder_enabled", value: enabled }).onConflictDoUpdate({ target: appSettings.key, set: { value: enabled, updatedAt: new Date() } });
+        await tx.insert(configAudit).values({ actorId: req.auth.userId, entity: "setting", entityKey: "geocoder_enabled", action: "update", changes: { enabled: { from: before, to: enabled } }, ip: req.ip });
+      });
+      invalidateSettings();
+      if (!enabled) opts.geocode.clear();
+    }
+    return { enabled };
+  });
+
   // Enfileira até 200 ocorrências sem bairro por chamada (as mais novas primeiro).
   app.post("/staff/geocode/backfill", { preHandler: gestorOnly, ...rl(5) }, async () => {
-    if (!opts.geocode.enabled) throw new HttpError(409, "Bairro automático está desligado (GEOCODER_ENABLED).");
+    if (!opts.geocode.enabled) throw new HttpError(409, "Bairro automático indisponível no servidor (GEOCODER_ENABLED).");
+    if (!(await geocoderSetting())) throw new HttpError(409, "Bairro automático está desligado. Ligue-o em Configuração.");
     return opts.geocode.backfill(200);
   });
 }

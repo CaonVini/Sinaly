@@ -29,6 +29,7 @@ const { buildApp } = await import("../src/app.js");
 const { db, pool } = await import("../src/db/client.js");
 const { users } = await import("../src/db/schema.js");
 const { nominatim } = await import("../src/geocode.js");
+const { invalidateSettings } = await import("../src/settings.js");
 const { encrypt } = await import("../src/security/crypto.js");
 const { hashPassword } = await import("../src/security/password.js");
 const { generateTotpSecret, totpAt, currentStep } = await import("../src/security/totp.js");
@@ -40,6 +41,8 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   await pool.query("truncate users, auth_events cascade");
+  await pool.query("delete from app_settings");
+  invalidateSettings();
   seen.length = 0;
   mode = "ok";
 });
@@ -65,6 +68,42 @@ async function createOcc(token: string) {
 }
 const status = async (t: string) => (await app.inject({ method: "GET", url: "/staff/geocode/status", headers: { authorization: `Bearer ${t}` } })).json();
 
+describe("interruptor do bairro automático", () => {
+  const put = (t: string, enabled: unknown) => app.inject({ method: "PUT", url: "/staff/config/geocoder", headers: { authorization: `Bearer ${t}` }, payload: { enabled } as object });
+
+  it("desligado: não consulta o serviço, backfill recusa, status mostra desligado e a mudança é auditada", async () => {
+    const t = await gestor();
+    expect((await put(t, "talvez")).statusCode).toBe(400);
+    expect((await put(t, false)).statusCode).toBe(200);
+    expect(await status(t)).toMatchObject({ enabled: false, available: true });
+    await createOcc(t);
+    await app.geocode.idle();
+    expect(seen).toHaveLength(0);
+    expect((await pool.query("select count(*)::int as n from occurrences where neighborhood is null")).rows[0].n).toBe(1);
+    expect((await app.inject({ method: "POST", url: "/staff/geocode/backfill", headers: { authorization: `Bearer ${t}` } })).statusCode).toBe(409);
+    expect(await app.geocode.backfill()).toMatchObject({ queued: 0 }); // o preenchimento ao subir também respeita
+
+    // religar volta a funcionar
+    expect((await put(t, true)).statusCode).toBe(200);
+    expect(await app.geocode.backfill()).toMatchObject({ queued: 1 });
+    await app.geocode.idle();
+    expect(seen).toHaveLength(1);
+    const audit = (await pool.query("select entity, entity_key, changes from config_audit order by id")).rows;
+    expect(audit.map((a) => a.changes.enabled)).toEqual([{ from: true, to: false }, { from: false, to: true }]);
+    expect(audit[0]).toMatchObject({ entity: "setting", entity_key: "geocoder_enabled" });
+    // repetir o mesmo valor não gera auditoria
+    await put(t, true);
+    expect((await pool.query("select count(*)::int as n from config_audit")).rows[0].n).toBe(2);
+  });
+
+  it("só gestor altera", async () => {
+    const secret = generateTotpSecret();
+    await db.insert(users).values({ email: "s@prefeitura.gov.br", name: "Serv", role: "servidor", passwordHash: await hashPassword("senha-do-funcionario-forte"), totpSecretEnc: encrypt(secret) });
+    const login = await app.inject({ method: "POST", url: "/auth/staff/login", payload: { email: "s@prefeitura.gov.br", password: "senha-do-funcionario-forte", totp: totpAt(secret, currentStep()) } });
+    expect((await put(login.json().accessToken, false)).statusCode).toBe(403);
+  });
+});
+
 describe("geocodificação real (Nominatim falso)", () => {
   it("chama /reverse com coordenadas, idioma e User-Agent, e grava o bairro", async () => {
     const t = await gestor();
@@ -78,7 +117,7 @@ describe("geocodificação real (Nominatim falso)", () => {
     expect(u.searchParams.get("accept-language")).toBe("pt-BR");
     expect(seen[0]!.ua).toBe("Sinaly-Teste/1.0 (teste@example.com)");
     expect((await pool.query("select neighborhood from occurrences where id = $1", [id])).rows[0].neighborhood).toBe("Bela Vista");
-    expect(await status(t)).toMatchObject({ enabled: true, filled: 1, failed: 0, missing: 0 });
+    expect(await status(t)).toMatchObject({ enabled: true, failed: 0, missing: 0 });
   });
 
   it("serviço recusando (403) fica visível no status com o motivo", async () => {

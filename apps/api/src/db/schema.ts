@@ -193,6 +193,13 @@ export const notifications = pgTable(
   (t) => [index("notifications_user_idx").on(t.userId, t.createdAt, t.id)],
 );
 
+// Ajustes de funcionamento editáveis pelo gestor (ex.: bairro automático ligado/desligado). Chave -> valor JSON.
+export const appSettings = pgTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // Auditoria da configuração (categorias e status): SOMENTE inserção, como a das ocorrências.
 export const configAudit = pgTable(
   "config_audit",

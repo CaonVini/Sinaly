@@ -17,6 +17,7 @@ const ROUTES: { method: string; re: RegExp }[] = [
   { method: "PATCH", re: new RegExp(`^staff/config/(categories|statuses)/${SLUG}$`) },
   { method: "DELETE", re: new RegExp(`^staff/config/(categories|statuses)/${SLUG}$`) },
   { method: "PUT", re: /^staff\/config\/(categories|statuses)-order$/ },
+  { method: "PUT", re: /^staff\/config\/geocoder$/ },
   { method: "POST", re: /^staff\/geocode\/backfill$/ },
   { method: "GET", re: /^staff\/geocode\/status$/ },
   { method: "GET", re: /^staff\/stats$/ },

@@ -1,13 +1,14 @@
 "use client";
 import { ICON_KEYS, type CategoryMeta, type StatusMeta } from "@sinaly/shared";
-import { ArrowDown, ArrowUp, Check, Loader2, Lock, MapPin, Pencil, Plus, Trash2, X } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, Check, Loader2, Lock, MapPin, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState, type FormEvent, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api, useApi } from "@/lib/client";
+import { api, ApiError, useApi } from "@/lib/client";
 import { iconFor } from "@/lib/icons";
 import { useMeta } from "@/lib/meta";
 import { cn, fmtDateTime } from "@/lib/utils";
@@ -90,11 +91,102 @@ function ItemForm({ withIcon, initial, submitLabel, onSubmit, onCancel }: { with
 
 type Item = (CategoryMeta | StatusMeta) & { icon?: string; kind?: string };
 
+/**
+ * Excluir só vale para item nunca usado. Se a API disser que já foi usado, o modal explica e oferece
+ * "Desativar" direto (o item some das listas de novos registros, mas o histórico fica intacto).
+ */
+function DeleteDialog({ item, kind, noun, onClose, onDone }: { item: Item | null; kind: "categories" | "statuses"; noun: string; onClose: () => void; onDone: () => Promise<void> }) {
+  const isCat = kind === "categories";
+  const [busy, setBusy] = useState<"delete" | "deactivate" | null>(null);
+  const [used, setUsed] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const close = () => {
+    if (busy) return;
+    setUsed(null);
+    setError(null);
+    onClose();
+  };
+
+  async function remove() {
+    if (!item) return;
+    setBusy("delete");
+    setError(null);
+    try {
+      await api(`staff/config/${kind}/${item.slug}`, { method: "DELETE" });
+      await onDone();
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && /desative/i.test(e.message)) setUsed(e.message);
+      else setError(e instanceof Error ? e.message : "Erro");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function deactivate() {
+    if (!item) return;
+    setBusy("deactivate");
+    setError(null);
+    try {
+      await api(`staff/config/${kind}/${item.slug}`, { method: "PATCH", body: { active: false } });
+      setUsed(null);
+      await onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erro");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <Dialog open={!!item} onOpenChange={(o) => !o && close()}>
+      <DialogContent>
+        {item && (
+          <>
+            <div className="flex items-start gap-3">
+              <span className={cn("flex size-10 shrink-0 items-center justify-center rounded-full", used ? "bg-[color:var(--st-nao_verificado)]/15 text-[color:var(--st-nao_verificado)]" : "bg-destructive/10 text-destructive")}>
+                {used ? <AlertTriangle className="size-5" /> : <Trash2 className="size-5" />}
+              </span>
+              <div className="min-w-0 space-y-1">
+                <DialogTitle>{used ? `${isCat ? "Esta categoria já foi utilizada" : "Este status já foi utilizado"}` : `Excluir ${noun}?`}</DialogTitle>
+                <DialogDescription>
+                  {used ? (
+                    <>
+                      <strong className="font-medium text-foreground">{item.name}</strong> aparece em ocorrências ou no histórico, então não pode ser {isCat ? "excluída" : "excluído"}. O correto é <strong className="font-medium text-foreground">desativar</strong>: {isCat ? "ela deixa de ser oferecida" : "ele deixa de ser oferecido"} em novos registros e o histórico continua intacto.
+                    </>
+                  ) : (
+                    <>
+                      Você vai excluir <strong className="font-medium text-foreground">{item.name}</strong>. Só é possível excluir {noun === "categoria" ? "categorias nunca usadas" : "status nunca usados"}. Se já foi {isCat ? "utilizada" : "utilizado"}, o correto é desativar.
+                    </>
+                  )}
+                </DialogDescription>
+              </div>
+            </div>
+            {error && <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="ghost" onClick={close} disabled={busy !== null}>Cancelar</Button>
+              {used ? (
+                <Button onClick={deactivate} disabled={busy !== null}>{busy === "deactivate" && <Loader2 className="animate-spin" />} Desativar</Button>
+              ) : (
+                <>
+                  <Button variant="outline" onClick={deactivate} disabled={busy !== null}>{busy === "deactivate" && <Loader2 className="animate-spin" />} Só desativar</Button>
+                  <Button variant="destructive" onClick={remove} disabled={busy !== null}>{busy === "delete" && <Loader2 className="animate-spin" />} Excluir</Button>
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ItemList({ kind, items, reload }: { kind: "categories" | "statuses"; items: Item[]; reload: () => Promise<void> }) {
   const isCat = kind === "categories";
   const [editing, setEditing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busySlug, setBusySlug] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<Item | null>(null);
   const noun = isCat ? "categoria" : "status";
 
   async function run(slug: string, fn: () => Promise<unknown>) {
@@ -120,6 +212,16 @@ function ItemList({ kind, items, reload }: { kind: "categories" | "statuses"; it
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
+      <DeleteDialog
+        item={deleting}
+        kind={kind}
+        noun={noun}
+        onClose={() => setDeleting(null)}
+        onDone={async () => {
+          setDeleting(null);
+          await reload();
+        }}
+      />
       <div className="space-y-3">
       {error && <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
       <ul className="divide-y rounded-xl border bg-card">
@@ -168,7 +270,7 @@ function ItemList({ kind, items, reload }: { kind: "categories" | "statuses"; it
                 )}
                 {!it.system && (
                   <Button variant="ghost" size="icon" disabled={busySlug !== null} aria-label={`Excluir ${it.name}`} className="text-destructive hover:text-destructive"
-                    onClick={() => confirm(`Excluir ${noun} "${it.name}"? Só é possível se nunca foi usada.`) && run(it.slug, () => api(`staff/config/${kind}/${it.slug}`, { method: "DELETE" }))}>
+                    onClick={() => setDeleting(it)}>
                     <Trash2 />
                   </Button>
                 )}
@@ -205,20 +307,20 @@ function History() {
   if (error) return <p role="alert" className="text-sm text-destructive">{error}</p>;
   if (!data) return <Skeleton className="h-40 w-full" />;
   if (data.items.length === 0) return <p className="py-8 text-center text-sm text-muted-foreground">Nenhuma alteração de configuração ainda.</p>;
-  const fmt = (v: unknown) => (v === null || v === undefined ? "—" : typeof v === "boolean" ? (v ? "sim" : "não") : Array.isArray(v) ? `${v.length} itens` : String(v));
+  const fmt = (v: unknown, key = "") => v === true ? (key === "active" ? "ativo" : "ligado") : v === false ? (key === "active" ? "inativo" : "desligado") : (v === null || v === undefined ? "—" : typeof v === "boolean" ? (v ? "sim" : "não") : Array.isArray(v) ? `${v.length} itens` : String(v));
   return (
     <ol className="divide-y rounded-xl border bg-card">
       {data.items.map((e) => (
         <li key={e.id} className="space-y-0.5 px-4 py-3 text-sm">
           <p>
-            <span className="font-medium">{e.actorName ?? "Gestor"}</span> {ACTION[e.action] ?? e.action} {e.entity === "category" ? "a categoria" : "o status"}{" "}
-            <span className="font-medium">{e.entityKey === "order" ? "(ordem)" : e.entity === "category" ? categoryName(e.entityKey) : statusName(e.entityKey)}</span>
+            <span className="font-medium">{e.actorName ?? "Gestor"}</span> {ACTION[e.action] ?? e.action} {e.entity === "category" ? "a categoria" : e.entity === "setting" ? "o ajuste" : "o status"}{" "}
+            <span className="font-medium">{e.entityKey === "order" ? "(ordem)" : e.entity === "setting" ? "Bairro automático" : e.entity === "category" ? categoryName(e.entityKey) : statusName(e.entityKey)}</span>
             <span className="text-muted-foreground"> · {fmtDateTime(e.at)}</span>
           </p>
           {e.action !== "reorder" && (
             <ul className="text-xs text-muted-foreground">
               {Object.entries(e.changes).map(([k, c]) => (
-                <li key={k}>{k}: {e.action === "create" ? fmt(c.to) : <>{fmt(c.from)} → {fmt(c.to)}</>}</li>
+                <li key={k}>{k}: {e.action === "create" ? fmt(c.to, k) : <>{fmt(c.from, k)} → {fmt(c.to, k)}</>}</li>
               ))}
             </ul>
           )}
@@ -228,7 +330,7 @@ function History() {
   );
 }
 
-type GeoStatus = { enabled: boolean; missing: number; pending: number; filled: number; notFound: number; failed: number; lastError: string | null; lastErrorAt: string | null; lastFilledAt: string | null };
+type GeoStatus = { available: boolean; enabled: boolean; missing: number; pending: number; filled: number; notFound: number; failed: number; lastError: string | null; lastErrorAt: string | null; lastFilledAt: string | null };
 
 function Stat({ label, value, tone }: { label: string; value: ReactNode; tone?: "bad" }) {
   return (
@@ -245,6 +347,21 @@ function Backfill() {
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const g = st.data;
+  const [toggling, setToggling] = useState(false);
+
+  async function toggle(next: boolean) {
+    setToggling(true);
+    setError(null);
+    try {
+      await api("staff/config/geocoder", { method: "PUT", body: { enabled: next } });
+      setMsg(null);
+      st.reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erro");
+    } finally {
+      setToggling(false);
+    }
+  }
 
   async function run() {
     setBusy(true);
@@ -268,8 +385,25 @@ function Backfill() {
         <CardContent className="space-y-3 text-sm">
           <p>Toda ocorrência nova sem bairro é consultada pelo ponto no mapa (geocodificação reversa) e o bairro é preenchido em segundo plano. Cada preenchimento aparece no histórico da ocorrência como &ldquo;automático&rdquo;, e você pode corrigir manualmente.</p>
           <p className="text-muted-foreground">Só as coordenadas do problema saem do servidor para o serviço de mapas (OpenStreetMap/Nominatim); nenhum dado pessoal. O serviço público limita a 1 consulta por segundo, então o lote de ocorrências antigas leva alguns minutos. Ao reiniciar, o sistema também tenta preencher as que faltam.</p>
+          <label className="flex items-center justify-between gap-4 rounded-lg border bg-muted/40 p-3">
+            <span>
+              <span className="block font-medium">Preenchimento automático</span>
+              <span className="block text-xs text-muted-foreground">{g?.available === false ? "Indisponível no servidor (GEOCODER_ENABLED)." : "Desligado, nenhuma consulta ao OpenStreetMap é feita; o bairro só entra se alguém digitar."}</span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!!g?.enabled}
+              aria-label="Preenchimento automático de bairro"
+              disabled={!g || g.available === false || toggling}
+              onClick={() => toggle(!g?.enabled)}
+              className={cn("relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50", g?.enabled ? "bg-primary" : "bg-input")}
+            >
+              <span className={cn("absolute top-0.5 left-0.5 size-5 rounded-full bg-white shadow transition-transform", g?.enabled && "translate-x-5")} />
+            </button>
+          </label>
           <div className="flex flex-wrap items-center gap-3">
-            <Button onClick={run} disabled={busy || g?.enabled === false}>{busy ? <Loader2 className="animate-spin" /> : <MapPin />} Preencher bairros que faltam</Button>
+            <Button onClick={run} disabled={busy || !g?.enabled}>{busy ? <Loader2 className="animate-spin" /> : <MapPin />} Preencher bairros que faltam</Button>
             <Button variant="ghost" size="sm" onClick={st.reload}>Atualizar números</Button>
             {msg && <span role="status" className="text-muted-foreground">{msg}</span>}
           </div>
@@ -281,8 +415,8 @@ function Backfill() {
         <h3 className="text-sm font-medium">Situação</h3>
         {!g ? <Skeleton className="h-40 w-full" /> : (
           <>
-            <p className={cn("rounded-lg border px-3 py-2 text-sm", g.enabled ? "bg-card" : "border-destructive/30 bg-destructive/10 text-destructive")}>
-              {g.enabled ? "Ligado." : "Desligado: defina GEOCODER_ENABLED=true no servidor."}
+            <p className={cn("rounded-lg border px-3 py-2 text-sm", g.enabled || g.available ? "bg-card" : "border-destructive/30 bg-destructive/10 text-destructive")}>
+              {g.enabled ? "Ligado." : g.available ? "Desligado pelo gestor." : "Desligado: defina GEOCODER_ENABLED=true no servidor."}
             </p>
             <div className="grid grid-cols-2 gap-3">
               <Stat label="Sem bairro" value={g.missing} />
