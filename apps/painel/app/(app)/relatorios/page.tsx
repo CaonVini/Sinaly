@@ -196,7 +196,7 @@ function Content() {
       {t && t.noNeighborhood > 0 && (
         <p className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
           <MapPinOff className="size-4 shrink-0" />
-          {t.noNeighborhood} {t.noNeighborhood === 1 ? "ocorrência está" : "ocorrências estão"} sem bairro. O bairro é preenchido automaticamente pelo local no mapa; o gestor pode reprocessar em{" "}
+          {t.noNeighborhood} {t.noNeighborhood === 1 ? "ocorrência está" : "ocorrências estão"} sem bairro. O bairro é preenchido automaticamente pelo local no mapa; o administrador pode reprocessar em{" "}
           <Link href="/configuracao" className="font-medium text-primary hover:underline">Configuração</Link>.
         </p>
       )}

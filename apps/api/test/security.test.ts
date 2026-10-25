@@ -287,7 +287,7 @@ describe("A5 · injeção", () => {
   });
 
   it("filtros de relatórios e filtros de config não aceitam SQL", async () => {
-    const ger = await staff("gestor", "g@p.gov.br");
+    const ger = await staff("admin", "g@p.gov.br");
     expect((await send("POST", "/staff/config/categories", ger.accessToken, { name: "x'); drop table users;--", color: "#000000", icon: "trash" })).statusCode).toBe(201); // vira slug seguro e texto
     const slug = (await pool.query("select slug from categories where not system")).rows[0].slug;
     expect(slug).toMatch(/^[a-z0-9_]+$/);

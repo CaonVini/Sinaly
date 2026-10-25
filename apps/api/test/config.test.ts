@@ -26,7 +26,7 @@ let geocoderAnswer: string | null = "Centro";
 const send = (method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE", url: string, token?: string, payload?: unknown) =>
   app.inject({ method, url, payload: payload as object, headers: token ? { authorization: `Bearer ${token}` } : {} });
 
-async function staff(role: "servidor" | "gestor", email: string) {
+async function staff(role: "servidor" | "gestor" | "admin", email: string) {
   const secret = generateTotpSecret();
   await db.insert(users).values({ email, name: `Func ${role}`, role, passwordHash: await hashPassword("senha-do-funcionario-forte"), totpSecretEnc: encrypt(secret) });
   const res = await send("POST", "/auth/staff/login", undefined, { email, password: "senha-do-funcionario-forte", totp: totpAt(secret, currentStep()) });
@@ -88,7 +88,7 @@ describe("GET /meta", () => {
 });
 
 describe("configuração: permissões", () => {
-  it("só o gestor altera; servidor e cidadão recebem 403, anônimo 401", async () => {
+  it("só o admin altera; gestor e servidor só consultam; cidadão 403, anônimo 401", async () => {
     const srv = await staff("servidor", "s@prefeitura.gov.br");
     const cit = await citizen("c@example.com");
     const body = { name: "Lixo", color: "#16a34a", icon: "trash" };
@@ -97,12 +97,38 @@ describe("configuração: permissões", () => {
     expect((await send("POST", "/staff/config/categories", cit, body)).statusCode).toBe(403);
     expect((await send("POST", "/staff/geocode/backfill", srv)).statusCode).toBe(403);
     expect((await send("GET", "/staff/config/audit", srv)).statusCode).toBe(403);
+
+    // gestor consulta (histórico, situação do bairro automático), mas toda escrita é 403
+    const ger = await staff("gestor", "ger@prefeitura.gov.br");
+    const adm = await staff("admin", "adm@prefeitura.gov.br");
+    const made = await send("POST", "/staff/config/categories", adm, body);
+    expect(made.statusCode).toBe(201);
+    const slug = made.json().slug;
+    expect((await send("GET", "/staff/config/audit", ger)).statusCode).toBe(200);
+    expect((await send("GET", "/staff/geocode/status", ger)).statusCode).toBe(200);
+    expect((await send("GET", "/meta", ger)).statusCode).toBe(200);
+    const writes: [Parameters<typeof send>[0], string, unknown][] = [
+      ["POST", "/staff/config/categories", body],
+      ["PATCH", `/staff/config/categories/${slug}`, { active: false }],
+      ["DELETE", `/staff/config/categories/${slug}`, undefined],
+      ["PUT", "/staff/config/categories-order", { slugs: [slug] }],
+      ["POST", "/staff/config/statuses", { name: "Em obra", color: "#f59e0b", icon: "wrench" }],
+      ["PATCH", "/staff/config/statuses/em_analise", { active: false }],
+      ["DELETE", "/staff/config/statuses/em_analise", undefined],
+      ["PUT", "/staff/config/statuses-order", { slugs: ["em_analise"] }],
+      ["PUT", "/staff/config/geocoder", { enabled: false }],
+      ["POST", "/staff/geocode/backfill", undefined],
+    ];
+    for (const [m, u, b] of writes) expect((await send(m, u, ger, b)).statusCode, `${m} ${u}`).toBe(403);
+    // nada mudou e o histórico não ganhou linhas pelas tentativas do gestor
+    expect((await send("GET", "/meta", adm)).json().categories.find((c: { slug: string }) => c.slug === slug).active).toBe(true);
+    await pool.query("delete from categories where not system");
   });
 });
 
 describe("categorias", () => {
   it("cria, valida, renomeia, desativa e audita", async () => {
-    const g = await staff("gestor", "g@prefeitura.gov.br");
+    const g = await staff("admin", "g@prefeitura.gov.br");
     const created = await send("POST", "/staff/config/categories", g, { name: "Coleta de lixo", color: "#16a34a", icon: "trash" });
     expect(created.statusCode).toBe(201);
     expect(created.json()).toMatchObject({ slug: "coleta_de_lixo", system: false, active: true });
@@ -137,7 +163,7 @@ describe("categorias", () => {
   });
 
   it("exclui categoria sem uso e reordena exigindo a lista completa", async () => {
-    const g = await staff("gestor", "g@prefeitura.gov.br");
+    const g = await staff("admin", "g@prefeitura.gov.br");
     await send("POST", "/staff/config/categories", g, { name: "Árvores", color: "#16a34a", icon: "tree" });
     const all = (await send("GET", "/meta")).json().categories.map((c: { slug: string }) => c.slug) as string[];
     expect(all.at(-1)).toBe("arvores");
@@ -152,7 +178,7 @@ describe("categorias", () => {
 
 describe("status", () => {
   it("status novo é 'em andamento': aparece no mapa, entra no fluxo e notifica com o nome certo", async () => {
-    const g = await staff("gestor", "g@prefeitura.gov.br");
+    const g = await staff("admin", "g@prefeitura.gov.br");
     const cit = await citizen("c@example.com");
     const created = await send("POST", "/staff/config/statuses", g, { name: "Aguardando peça", color: "#a855f7" });
     expect(created.statusCode).toBe(201);
@@ -176,7 +202,7 @@ describe("status", () => {
   });
 
   it("protege os status do sistema e só exclui status nunca usado", async () => {
-    const g = await staff("gestor", "g@prefeitura.gov.br");
+    const g = await staff("admin", "g@prefeitura.gov.br");
     expect((await send("PATCH", "/staff/config/statuses/resolvido", g, { active: false })).statusCode).toBe(409);
     expect((await send("DELETE", "/staff/config/statuses/resolvido", g)).statusCode).toBe(409);
     // renomear o do sistema é permitido e não muda a regra (continua do tipo resolved)
@@ -196,7 +222,7 @@ describe("status", () => {
   });
 
   it("cadastro manual não aceita status resolvido/recusado nem inativo", async () => {
-    const g = await staff("gestor", "g@prefeitura.gov.br");
+    const g = await staff("admin", "g@prefeitura.gov.br");
     expect((await multipartCreate("/staff/occurrences", g, occ({ status: "recusado" }))).statusCode).toBe(400);
     expect((await multipartCreate("/staff/occurrences", g, occ({ status: "nao_existe" }))).statusCode).toBe(400);
     await send("POST", "/staff/config/statuses", g, { name: "Temporário", color: "#0ea5e9" });
@@ -205,7 +231,7 @@ describe("status", () => {
   });
 
   it("a regra dos 5 dias continua valendo pelo tipo do status (renomeado)", async () => {
-    const g = await staff("gestor", "g@prefeitura.gov.br");
+    const g = await staff("admin", "g@prefeitura.gov.br");
     const o = (await multipartCreate("/staff/occurrences", g, occ())).json();
     await send("PATCH", `/staff/occurrences/${o.id}`, g, { status: "resolvido" });
     await pool.query("update occurrences set resolved_at = now() - interval '6 days' where id = $1", [o.id]);
@@ -216,7 +242,7 @@ describe("status", () => {
 
 describe("auditoria da configuração é imutável", () => {
   it("o banco recusa UPDATE e DELETE", async () => {
-    const g = await staff("gestor", "g@prefeitura.gov.br");
+    const g = await staff("admin", "g@prefeitura.gov.br");
     await send("POST", "/staff/config/categories", g, { name: "Teste imutável", color: "#16a34a", icon: "tree" });
     await expect(pool.query("update config_audit set action = 'x'")).rejects.toThrow();
     await expect(pool.query("delete from config_audit")).rejects.toThrow();
@@ -225,7 +251,7 @@ describe("auditoria da configuração é imutável", () => {
 
 describe("relatórios", () => {
   it("agrega por bairro, categoria, status e período; servidor acessa, cidadão não", async () => {
-    const g = await staff("gestor", "g@prefeitura.gov.br");
+    const g = await staff("admin", "g@prefeitura.gov.br");
     const cit = await citizen("c@example.com");
     const a = (await multipartCreate("/staff/occurrences", g, occ({ neighborhood: "Centro" }))).json();
     await multipartCreate("/staff/occurrences", g, occ({ neighborhood: "Centro", category: "seguranca" }));
@@ -252,7 +278,7 @@ describe("relatórios", () => {
 
 describe("bairro automático", () => {
   it("preenche em segundo plano, audita como automático e não sobrescreve bairro informado", async () => {
-    const g = await staff("gestor", "g@prefeitura.gov.br");
+    const g = await staff("admin", "g@prefeitura.gov.br");
     const created = (await multipartCreate("/staff/occurrences", g, occ())).json();
     expect(created.neighborhood).toBeNull(); // a resposta não espera o geocoder
     await app.geocode.idle();
@@ -269,7 +295,7 @@ describe("bairro automático", () => {
   });
 
   it("falha do serviço deixa a ocorrência sem bairro; o backfill reprocessa", async () => {
-    const g = await staff("gestor", "g@prefeitura.gov.br");
+    const g = await staff("admin", "g@prefeitura.gov.br");
     geocoderAnswer = null;
     await multipartCreate("/staff/occurrences", g, occ());
     await multipartCreate("/staff/occurrences", g, occ({ lat: "-23.56" }));
@@ -286,7 +312,7 @@ describe("bairro automático", () => {
   it("serviço desligado: backfill responde 409", async () => {
     const off = await buildApp({ rateLimit: false, geocoder: null });
     await off.ready();
-    const g = await staff("gestor", "g2@prefeitura.gov.br");
+    const g = await staff("admin", "g2@prefeitura.gov.br");
     const res = await off.inject({ method: "POST", url: "/staff/geocode/backfill", headers: { authorization: `Bearer ${g}` } });
     expect(res.statusCode).toBe(409);
     await off.close();

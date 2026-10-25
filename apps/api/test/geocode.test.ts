@@ -54,7 +54,7 @@ afterAll(async () => {
 
 async function gestor() {
   const secret = generateTotpSecret();
-  await db.insert(users).values({ email: "g@prefeitura.gov.br", name: "Gestor", role: "gestor", passwordHash: await hashPassword("senha-do-funcionario-forte"), totpSecretEnc: encrypt(secret) });
+  await db.insert(users).values({ email: "g@prefeitura.gov.br", name: "Admin", role: "admin", passwordHash: await hashPassword("senha-do-funcionario-forte"), totpSecretEnc: encrypt(secret) });
   const res = await app.inject({ method: "POST", url: "/auth/staff/login", payload: { email: "g@prefeitura.gov.br", password: "senha-do-funcionario-forte", totp: totpAt(secret, currentStep()) } });
   return res.json().accessToken as string;
 }
@@ -96,7 +96,7 @@ describe("interruptor do bairro automático", () => {
     expect((await pool.query("select count(*)::int as n from config_audit")).rows[0].n).toBe(2);
   });
 
-  it("só gestor altera", async () => {
+  it("só admin altera (servidor recebe 403)", async () => {
     const secret = generateTotpSecret();
     await db.insert(users).values({ email: "s@prefeitura.gov.br", name: "Serv", role: "servidor", passwordHash: await hashPassword("senha-do-funcionario-forte"), totpSecretEnc: encrypt(secret) });
     const login = await app.inject({ method: "POST", url: "/auth/staff/login", payload: { email: "s@prefeitura.gov.br", password: "senha-do-funcionario-forte", totp: totpAt(secret, currentStep()) } });

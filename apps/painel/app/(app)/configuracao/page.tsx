@@ -181,7 +181,7 @@ function DeleteDialog({ item, kind, noun, onClose, onDone }: { item: Item | null
   );
 }
 
-function ItemList({ kind, items, reload }: { kind: "categories" | "statuses"; items: Item[]; reload: () => Promise<void> }) {
+function ItemList({ kind, items, reload, canEdit }: { kind: "categories" | "statuses"; items: Item[]; reload: () => Promise<void>; canEdit: boolean }) {
   const isCat = kind === "categories";
   const [editing, setEditing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -228,7 +228,7 @@ function ItemList({ kind, items, reload }: { kind: "categories" | "statuses"; it
         {items.map((it, i) => {
           const Icon = isCat ? iconFor(it.icon) : null;
           const busy = busySlug === it.slug;
-          if (editing === it.slug) {
+          if (canEdit && editing === it.slug) {
             return (
               <li key={it.slug} className="p-3">
                 <ItemForm
@@ -258,7 +258,7 @@ function ItemList({ kind, items, reload }: { kind: "categories" | "statuses"; it
                 </p>
                 <p className="text-xs text-muted-foreground">{isCat ? it.slug : `${KIND_LABEL[it.kind ?? "active"]} · ${it.slug}`}</p>
               </div>
-              <div className="flex items-center gap-0.5">
+              {canEdit && <div className="flex items-center gap-0.5">
                 <Button variant="ghost" size="icon" disabled={busySlug !== null || i === 0} onClick={() => move(i, -1)} aria-label={`Subir ${it.name}`}><ArrowUp /></Button>
                 <Button variant="ghost" size="icon" disabled={busySlug !== null || i === items.length - 1} onClick={() => move(i, 1)} aria-label={`Descer ${it.name}`}><ArrowDown /></Button>
                 <Button variant="ghost" size="icon" disabled={busySlug !== null} onClick={() => setEditing(it.slug)} aria-label={`Editar ${it.name}`}><Pencil /></Button>
@@ -274,14 +274,14 @@ function ItemList({ kind, items, reload }: { kind: "categories" | "statuses"; it
                     <Trash2 />
                   </Button>
                 )}
-              </div>
+              </div>}
             </li>
           );
         })}
       </ul>
       </div>
 
-      <div className="xl:sticky xl:top-6">
+      {canEdit ? <div className="xl:sticky xl:top-6">
         <h3 className="mb-2 text-sm font-medium">{isCat ? "Nova categoria" : "Novo status"}</h3>
         <ItemForm
           withIcon={isCat}
@@ -293,7 +293,7 @@ function ItemList({ kind, items, reload }: { kind: "categories" | "statuses"; it
           }}
         />
         {!isCat && <p className="mt-2 text-xs text-muted-foreground">Status novos entram como &ldquo;em andamento&rdquo;: aparecem no mapa público e o morador é avisado quando a ocorrência chega neles. Não verificado, Em análise, Em atendimento, Resolvido e Recusado são do sistema e só aceitam nome, cor e ordem.</p>}
-      </div>
+      </div> : <p className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground xl:sticky xl:top-6"><Lock className="mr-1.5 inline size-4" />Somente o administrador cria, edita, ativa, desativa, exclui ou reordena. Você pode consultar.</p>}
     </div>
   );
 }
@@ -341,7 +341,7 @@ function Stat({ label, value, tone }: { label: string; value: ReactNode; tone?: 
   );
 }
 
-function Backfill() {
+function Backfill({ canEdit }: { canEdit: boolean }) {
   const st = useApi<GeoStatus>("staff/geocode/status");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -395,7 +395,7 @@ function Backfill() {
               role="switch"
               aria-checked={!!g?.enabled}
               aria-label="Preenchimento automático de bairro"
-              disabled={!g || g.available === false || toggling}
+              disabled={!canEdit || !g || g.available === false || toggling}
               onClick={() => toggle(!g?.enabled)}
               className={cn("relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50", g?.enabled ? "bg-primary" : "bg-input")}
             >
@@ -403,7 +403,7 @@ function Backfill() {
             </button>
           </label>
           <div className="flex flex-wrap items-center gap-3">
-            <Button onClick={run} disabled={busy || !g?.enabled}>{busy ? <Loader2 className="animate-spin" /> : <MapPin />} Preencher bairros que faltam</Button>
+            <Button onClick={run} disabled={!canEdit || busy || !g?.enabled}>{busy ? <Loader2 className="animate-spin" /> : <MapPin />} Preencher bairros que faltam</Button>
             <Button variant="ghost" size="sm" onClick={st.reload}>Atualizar números</Button>
             {msg && <span role="status" className="text-muted-foreground">{msg}</span>}
           </div>
@@ -416,7 +416,7 @@ function Backfill() {
         {!g ? <Skeleton className="h-40 w-full" /> : (
           <>
             <p className={cn("rounded-lg border px-3 py-2 text-sm", g.enabled || g.available ? "bg-card" : "border-destructive/30 bg-destructive/10 text-destructive")}>
-              {g.enabled ? "Ligado." : g.available ? "Desligado pelo gestor." : "Desligado: defina GEOCODER_ENABLED=true no servidor."}
+              {g.enabled ? "Ligado." : g.available ? "Desligado pelo administrador." : "Desligado: defina GEOCODER_ENABLED=true no servidor."}
             </p>
             <div className="grid grid-cols-2 gap-3">
               <Stat label="Sem bairro" value={g.missing} />
@@ -442,12 +442,13 @@ export default function ConfiguracaoPage() {
   const { data: me } = useApi<{ role: string }>("me");
   const { meta, reload } = useMeta();
   const [tab, setTab] = useState<Tab>("categories");
+  const isAdmin = me?.role === "admin";
 
   if (me && me.role !== "gestor" && me.role !== "admin") {
     return (
       <div className="p-6">
         <h1 className="text-2xl font-semibold tracking-tight">Configuração</h1>
-        <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground"><Lock className="size-4" /> Somente gestores podem alterar categorias e status.</p>
+        <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground"><Lock className="size-4" /> Somente gestores e administradores veem a configuração.</p>
       </div>
     );
   }
@@ -456,7 +457,7 @@ export default function ConfiguracaoPage() {
     <div className="min-w-0 space-y-4 p-4 md:p-6">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Configuração</h1>
-        <p className="text-sm text-muted-foreground">Categorias e status que aparecem no mapa, nos filtros, na planilha e nos relatórios. Toda alteração fica registrada no histórico.</p>
+        <p className="text-sm text-muted-foreground">Categorias e status que aparecem no mapa, nos filtros, na planilha e nos relatórios. Toda alteração fica registrada no histórico.{me && !isAdmin && " Só o administrador altera; você está em modo de consulta."}</p>
       </header>
       <div className="flex flex-wrap gap-1 border-b" role="tablist" aria-label="Seções">
         {TABS.map((t) => (
@@ -465,9 +466,9 @@ export default function ConfiguracaoPage() {
           </button>
         ))}
       </div>
-      {tab === "categories" && <ItemList kind="categories" items={meta.categories as Item[]} reload={reload} />}
-      {tab === "statuses" && <ItemList kind="statuses" items={meta.statuses as Item[]} reload={reload} />}
-      {tab === "bairro" && <Backfill />}
+      {tab === "categories" && <ItemList kind="categories" items={meta.categories as Item[]} reload={reload} canEdit={isAdmin} />}
+      {tab === "statuses" && <ItemList kind="statuses" items={meta.statuses as Item[]} reload={reload} canEdit={isAdmin} />}
+      {tab === "bairro" && <Backfill canEdit={isAdmin} />}
       {tab === "historico" && <History />}
     </div>
   );

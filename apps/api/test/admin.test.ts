@@ -63,13 +63,14 @@ describe("cargos e gestão de equipe", () => {
     expect((await send("PATCH", `/admin/staff/${crypto.randomUUID()}`, srv, { active: false, totp: "123456" })).statusCode).toBe(403);
   });
 
-  it("gestor continua com Configuração; servidor não; admin também", async () => {
+  it("só admin altera Configuração; gestor só consulta; servidor não vê", async () => {
     const adm = await staff("admin", "adm@p.gov.br");
     const ger = await staff("gestor", "ger@p.gov.br");
     const srv = await staff("servidor", "srv@p.gov.br");
     const body = { name: "Lixo", color: "#16a34a", icon: "trash" };
     expect((await send("POST", "/staff/config/categories", srv, body)).statusCode).toBe(403);
-    expect((await send("POST", "/staff/config/categories", ger, body)).statusCode).toBe(201);
+    expect((await send("POST", "/staff/config/categories", ger, body)).statusCode).toBe(403);
+    expect((await send("GET", "/staff/config/audit", ger)).statusCode).toBe(200);
     expect((await send("POST", "/staff/config/categories", adm, { ...body, name: "Lixo 2" })).statusCode).toBe(201);
     await pool.query("delete from categories where not system");
   });

@@ -48,7 +48,9 @@ async function freeSlug(tx: Tx, entity: Entity, base: string): Promise<string> {
 }
 
 export async function configRoutes(app: FastifyInstance, opts: { rateLimit: boolean; geocode: GeocodeQueue }) {
-  const gestorOnly = app.requireRole("gestor", "admin");
+  // Só o admin altera categorias, status e bairro automático; gestor apenas consulta (histórico e situação).
+  const adminOnly = app.requireRole("admin");
+  const viewers = app.requireRole("gestor", "admin");
   const rl = (max: number) => limitConfig(opts.rateLimit, max, "1 minute");
   const slugParam = (req: FastifyRequest) => (req.params as { slug: string }).slug;
 
@@ -76,7 +78,7 @@ export async function configRoutes(app: FastifyInstance, opts: { rateLimit: bool
   });
 
   // ---------- categorias ----------
-  app.post("/staff/config/categories", { preHandler: gestorOnly, ...rl(30) }, async (req, reply) => {
+  app.post("/staff/config/categories", { preHandler: adminOnly, ...rl(30) }, async (req, reply) => {
     const body = parse(categoryCreateSchema, req.body);
     const created = await db
       .transaction(async (tx) => {
@@ -91,7 +93,7 @@ export async function configRoutes(app: FastifyInstance, opts: { rateLimit: bool
     return reply.code(201).send(created);
   });
 
-  app.patch("/staff/config/categories/:slug", { preHandler: gestorOnly, ...rl(60) }, async (req) => {
+  app.patch("/staff/config/categories/:slug", { preHandler: adminOnly, ...rl(60) }, async (req) => {
     const slug = slugParam(req);
     const body = parse(categoryPatchSchema, req.body);
     const updated = await db
@@ -109,7 +111,7 @@ export async function configRoutes(app: FastifyInstance, opts: { rateLimit: bool
     return updated;
   });
 
-  app.delete("/staff/config/categories/:slug", { preHandler: gestorOnly, ...rl(30) }, async (req, reply) => {
+  app.delete("/staff/config/categories/:slug", { preHandler: adminOnly, ...rl(30) }, async (req, reply) => {
     const slug = slugParam(req);
     await db.transaction(async (tx) => {
       const [cur] = await tx.select().from(categories).where(eq(categories.slug, slug)).for("update");
@@ -124,13 +126,13 @@ export async function configRoutes(app: FastifyInstance, opts: { rateLimit: bool
     return reply.code(204).send();
   });
 
-  app.put("/staff/config/categories-order", { preHandler: gestorOnly, ...rl(30) }, async (req, reply) => {
+  app.put("/staff/config/categories-order", { preHandler: adminOnly, ...rl(30) }, async (req, reply) => {
     await reorder(req, "category");
     return reply.code(204).send();
   });
 
   // ---------- status ----------
-  app.post("/staff/config/statuses", { preHandler: gestorOnly, ...rl(30) }, async (req, reply) => {
+  app.post("/staff/config/statuses", { preHandler: adminOnly, ...rl(30) }, async (req, reply) => {
     const body = parse(statusCreateSchema, req.body);
     const created = await db
       .transaction(async (tx) => {
@@ -146,7 +148,7 @@ export async function configRoutes(app: FastifyInstance, opts: { rateLimit: bool
     return reply.code(201).send(created);
   });
 
-  app.patch("/staff/config/statuses/:slug", { preHandler: gestorOnly, ...rl(60) }, async (req) => {
+  app.patch("/staff/config/statuses/:slug", { preHandler: adminOnly, ...rl(60) }, async (req) => {
     const slug = slugParam(req);
     const body = parse(statusPatchSchema, req.body);
     const updated = await db
@@ -166,7 +168,7 @@ export async function configRoutes(app: FastifyInstance, opts: { rateLimit: bool
     return updated;
   });
 
-  app.delete("/staff/config/statuses/:slug", { preHandler: gestorOnly, ...rl(30) }, async (req, reply) => {
+  app.delete("/staff/config/statuses/:slug", { preHandler: adminOnly, ...rl(30) }, async (req, reply) => {
     const slug = slugParam(req);
     await db.transaction(async (tx) => {
       const [cur] = await tx.select().from(statuses).where(eq(statuses.slug, slug)).for("update");
@@ -185,13 +187,13 @@ export async function configRoutes(app: FastifyInstance, opts: { rateLimit: bool
     return reply.code(204).send();
   });
 
-  app.put("/staff/config/statuses-order", { preHandler: gestorOnly, ...rl(30) }, async (req, reply) => {
+  app.put("/staff/config/statuses-order", { preHandler: adminOnly, ...rl(30) }, async (req, reply) => {
     await reorder(req, "status");
     return reply.code(204).send();
   });
 
   // ---------- auditoria da configuração ----------
-  app.get("/staff/config/audit", { preHandler: gestorOnly }, async () => {
+  app.get("/staff/config/audit", { preHandler: viewers }, async () => {
     const rows = await db
       .select({
         id: configAudit.id,
@@ -210,7 +212,7 @@ export async function configRoutes(app: FastifyInstance, opts: { rateLimit: bool
   });
 
   // ---------- bairro automático ----------
-  app.get("/staff/geocode/status", { preHandler: gestorOnly }, async () => ({
+  app.get("/staff/geocode/status", { preHandler: viewers }, async () => ({
     available: opts.geocode.enabled, // servidor configurado (GEOCODER_ENABLED)
     enabled: opts.geocode.enabled && (await geocoderSetting()), // e ligado pelo gestor
     missing: await opts.geocode.missing(),
@@ -218,7 +220,7 @@ export async function configRoutes(app: FastifyInstance, opts: { rateLimit: bool
   }));
 
   // Liga/desliga o preenchimento automático. Persistido, auditado, vale na hora.
-  app.put("/staff/config/geocoder", { preHandler: gestorOnly, ...rl(30) }, async (req) => {
+  app.put("/staff/config/geocoder", { preHandler: adminOnly, ...rl(30) }, async (req) => {
     const { enabled } = parse(z.object({ enabled: z.boolean() }).strict(), req.body);
     const before = await geocoderSetting();
     if (before !== enabled) {
@@ -233,7 +235,7 @@ export async function configRoutes(app: FastifyInstance, opts: { rateLimit: bool
   });
 
   // Enfileira até 200 ocorrências sem bairro por chamada (as mais novas primeiro).
-  app.post("/staff/geocode/backfill", { preHandler: gestorOnly, ...rl(5) }, async () => {
+  app.post("/staff/geocode/backfill", { preHandler: adminOnly, ...rl(5) }, async () => {
     if (!opts.geocode.enabled) throw new HttpError(409, "Bairro automático indisponível no servidor (GEOCODER_ENABLED).");
     if (!(await geocoderSetting())) throw new HttpError(409, "Bairro automático está desligado. Ligue-o em Configuração.");
     return opts.geocode.backfill(200);
